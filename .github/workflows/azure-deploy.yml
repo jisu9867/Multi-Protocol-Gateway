@@ -1,0 +1,113 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  AZURE_WEBAPP_NAME: gateway-api
+  AZURE_WEBAPP_NAME_UI: gateway-ui
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gateway
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore Gateway.sln
+
+    - name: Build
+      run: dotnet build Gateway.sln --configuration Release --no-restore
+
+    - name: Publish API
+      run: dotnet publish src/Gateway.Api/Gateway.Api.csproj --configuration Release --output ./publish/api
+
+    - name: Publish UI
+      run: dotnet publish src/Gateway.Ui/Gateway.Ui.csproj --configuration Release --output ./publish/ui
+
+    - name: Upload API artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-artifacts
+        path: ./publish/api
+
+    - name: Upload UI artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ui-artifacts
+        path: ./publish/ui
+
+  deploy-api:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: 'Production'
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+    
+    steps:
+    - name: Download API artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: api-artifacts
+        path: ./publish/api
+
+    - name: Deploy to Azure Web App
+      id: deploy-to-webapp
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_API }}
+        package: ./publish/api
+
+  deploy-ui:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: 'Production'
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+    
+    steps:
+    - name: Download UI artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ui-artifacts
+        path: ./publish/ui
+
+    - name: Deploy to Azure Web App
+      id: deploy-to-webapp
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME_UI }}
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_UI }}
+        package: ./publish/ui

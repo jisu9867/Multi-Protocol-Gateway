@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: gateway
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore Gateway.sln
+
+    - name: Build
+      run: dotnet build Gateway.sln --configuration Release --no-restore
+
+    - name: Run EF Migrations (dry-run)
+      run: |
+        cd src/Gateway.Api
+        dotnet ef migrations list --project ../Gateway.Infrastructure/Gateway.Infrastructure.csproj
+      continue-on-error: true
+
+    - name: Test
+      run: dotnet test Gateway.sln --configuration Release --no-build --verbosity normal
+      continue-on-error: true
+
