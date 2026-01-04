@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
-    <ProjectReference Include="..\Gateway.Api\Gateway.Api.csproj" />
+    <ProjectReference Include="..\Gateway.Core\Gateway.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

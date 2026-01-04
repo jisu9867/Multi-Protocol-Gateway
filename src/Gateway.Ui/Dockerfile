@@ -6,7 +6,6 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY ["Directory.Build.props", "."]
 COPY ["src/Gateway.Core/Gateway.Core.csproj", "src/Gateway.Core/"]
-COPY ["src/Gateway.Api/Gateway.Api.csproj", "src/Gateway.Api/"]
 COPY ["src/Gateway.Ui/Gateway.Ui.csproj", "src/Gateway.Ui/"]
 RUN dotnet restore "src/Gateway.Ui/Gateway.Ui.csproj"
 COPY . .
