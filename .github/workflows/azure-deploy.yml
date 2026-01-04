@@ -11,8 +11,8 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  AZURE_WEBAPP_NAME: gateway-api
-  AZURE_WEBAPP_NAME_UI: gateway-ui
+  AZURE_WEBAPP_NAME: gateway-api-wltn9
+  AZURE_WEBAPP_NAME_UI: gateway-ui-wltn9
 
 jobs:
   build:
