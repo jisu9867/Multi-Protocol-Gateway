@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using Gateway.Core.Models;
 using Gateway.Core.Pipeline;
@@ -104,20 +105,43 @@ public sealed class NormalizeStage : INormalize
 
     private static TelemetryEvent Normalize(RawData rawData)
     {
-        var payload = rawData.Payload switch
+        // Convert payload to JsonElement
+        JsonElement value;
+        if (rawData.Payload is Dictionary<string, object?> dict)
         {
-            Dictionary<string, object?> dict => dict,
-            _ => new Dictionary<string, object?> { ["value"] = rawData.Payload }
-        };
+            value = JsonSerializer.SerializeToElement(dict);
+        }
+        else
+        {
+            value = JsonSerializer.SerializeToElement(new { value = rawData.Payload });
+        }
+
+        // Extract tag from metadata or use default
+        var tag = rawData.Metadata.TryGetValue("tag", out var tagValue) 
+            ? tagValue 
+            : "default";
+
+        // Extract sequence from metadata or use 0
+        var sequence = rawData.Metadata.TryGetValue("sequence", out var seqValue) 
+            && long.TryParse(seqValue, out var seq)
+            ? seq 
+            : 0L;
+
+        // Extract traceId from metadata if available
+        var traceId = rawData.Metadata.TryGetValue("traceId", out var traceValue) 
+            ? traceValue 
+            : null;
 
         return new TelemetryEvent
         {
-            Id = Guid.NewGuid().ToString("N"),
+            EventId = Guid.NewGuid(),
             SourceId = rawData.SourceId,
-            AdapterId = rawData.AdapterId,
-            Timestamp = rawData.Timestamp,
-            Payload = payload,
-            Metadata = rawData.Metadata
+            Tag = tag,
+            Value = value,
+            Timestamp = new DateTimeOffset(rawData.Timestamp, TimeSpan.Zero),
+            Quality = DataQuality.Good,
+            Sequence = sequence,
+            TraceId = traceId
         };
     }
 }

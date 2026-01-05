@@ -104,7 +104,7 @@ public sealed class RouteStage : IRoute
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Error routing event {EventId} to sink", telemetryEvent.Id);
+                        _logger.LogWarning(ex, "Error routing event {EventId} to sink", telemetryEvent.EventId);
                     }
                 });
 
@@ -112,7 +112,7 @@ public sealed class RouteStage : IRoute
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error routing telemetry event {EventId}", telemetryEvent.Id);
+                _logger.LogError(ex, "Error routing telemetry event {EventId}", telemetryEvent.EventId);
             }
         }
     }
