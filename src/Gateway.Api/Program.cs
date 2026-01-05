@@ -49,19 +49,24 @@ builder.Services.AddSingleton<IPipelineMetrics, DefaultPipelineMetrics>();
 builder.Services.AddSingleton<IIngest, IngestStage>();
 builder.Services.AddSingleton<INormalize, NormalizeStage>();
 
+// Sink options configuration
+builder.Services.Configure<Gateway.Infrastructure.Configuration.SinkOptions>(
+    builder.Configuration.GetSection(Gateway.Infrastructure.Configuration.SinkOptions.SectionName));
+
 // Sinks (must be registered before RouteStage)
 builder.Services.AddSingleton<ISink>(sp =>
 {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var logger = sp.GetRequiredService<ILogger<PostgreSqlSink>>();
-    return new PostgreSqlSink(scopeFactory, logger);
+    var sinkOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Gateway.Infrastructure.Configuration.SinkOptions>>();
+    return new PostgreSqlSink(scopeFactory, logger, sinkOptions);
 });
 
-var jsonlFilePath = builder.Configuration["Sinks:JsonlFilePath"] ?? "logs/telemetry.jsonl";
 builder.Services.AddSingleton<ISink>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<JsonlFileSink>>();
-    return new JsonlFileSink(jsonlFilePath, logger);
+    var sinkOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Gateway.Infrastructure.Configuration.SinkOptions>>();
+    return new JsonlFileSink(logger, sinkOptions);
 });
 
 // Route stage (depends on sinks)
