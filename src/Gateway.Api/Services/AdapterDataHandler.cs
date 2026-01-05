@@ -25,6 +25,7 @@ public sealed class AdapterDataHandler : IAdapterDataHandler
         string sourceId,
         DateTime timestamp,
         Dictionary<string, object> payload,
+        Dictionary<string, string>? metadata = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -35,7 +36,7 @@ public sealed class AdapterDataHandler : IAdapterDataHandler
                 SourceId = sourceId,
                 Timestamp = timestamp,
                 Payload = payload,
-                Metadata = new Dictionary<string, string>()
+                Metadata = metadata ?? new Dictionary<string, string>()
             };
 
             await _ingest.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
@@ -48,4 +49,3 @@ public sealed class AdapterDataHandler : IAdapterDataHandler
         }
     }
 }
-

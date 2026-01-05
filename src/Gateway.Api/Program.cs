@@ -3,10 +3,12 @@ using Gateway.Api.Services;
 using Gateway.Api.HealthChecks;
 using Gateway.Core.Adapters;
 using Gateway.Core.Pipeline;
+using Gateway.Infrastructure.Configuration;
 using Gateway.Infrastructure.Data;
 using Gateway.Infrastructure.Sinks;
 using Gateway.Api.Pipeline;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
@@ -50,22 +52,22 @@ builder.Services.AddSingleton<IIngest, IngestStage>();
 builder.Services.AddSingleton<INormalize, NormalizeStage>();
 
 // Sink options configuration
-builder.Services.Configure<Gateway.Infrastructure.Configuration.SinkOptions>(
-    builder.Configuration.GetSection(Gateway.Infrastructure.Configuration.SinkOptions.SectionName));
+builder.Services.Configure<SinkOptions>(
+    builder.Configuration.GetSection(SinkOptions.SectionName));
 
 // Sinks (must be registered before RouteStage)
 builder.Services.AddSingleton<ISink>(sp =>
 {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var logger = sp.GetRequiredService<ILogger<PostgreSqlSink>>();
-    var sinkOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Gateway.Infrastructure.Configuration.SinkOptions>>();
+    var sinkOptions = sp.GetRequiredService<IOptions<SinkOptions>>();
     return new PostgreSqlSink(scopeFactory, logger, sinkOptions);
 });
 
 builder.Services.AddSingleton<ISink>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<JsonlFileSink>>();
-    var sinkOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Gateway.Infrastructure.Configuration.SinkOptions>>();
+    var sinkOptions = sp.GetRequiredService<IOptions<SinkOptions>>();
     return new JsonlFileSink(logger, sinkOptions);
 });
 
@@ -100,8 +102,8 @@ app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
-// Health endpoint
-app.MapHealthChecks("/health");
+// Health endpoint - using custom HealthController for detailed status
+// Built-in health checks are available at /health/ready and /health/live (if configured)
 
 // Metrics endpoint
 app.MapGet("/metrics", (IPipelineMetrics metrics) =>

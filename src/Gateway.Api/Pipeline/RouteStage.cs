@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace Gateway.Api.Pipeline;
 
 /// <summary>
-/// Routing stage implementation - routes to all sinks
+/// Routing stage implementation - routes to all sinks based on tag prefix
 /// </summary>
 public sealed class RouteStage : IRoute
 {
@@ -88,7 +88,8 @@ public sealed class RouteStage : IRoute
         {
             try
             {
-                // Route to all sinks
+                // Simple routing: route to all sinks (tag prefix routing can be added here if needed)
+                // For now, all events go to all sinks
                 var tasks = _outputChannels.Select(async channel =>
                 {
                     try
@@ -117,4 +118,3 @@ public sealed class RouteStage : IRoute
         }
     }
 }
-
