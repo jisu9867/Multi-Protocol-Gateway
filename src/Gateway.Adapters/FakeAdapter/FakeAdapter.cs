@@ -1,18 +1,23 @@
+using System.Diagnostics;
 using Gateway.Core.Adapters;
 using Microsoft.Extensions.Logging;
 
 namespace Gateway.Adapters.FakeAdapter;
 
 /// <summary>
-/// Fake adapter for testing - generates random telemetry data
+/// Fake adapter for testing - generates telemetry data every 100ms
 /// </summary>
 public sealed class FakeAdapter : IAdapter
 {
+    private static readonly ActivitySource ActivitySource = new("Gateway.Adapters.FakeAdapter");
+    
     private readonly ILogger<FakeAdapter> _logger;
     private readonly string _id;
     private Task? _generationTask;
     private CancellationTokenSource? _cancellationTokenSource;
     private AdapterStatus _status = AdapterStatus.Stopped;
+    private long _sequence = 0;
+    private readonly object _sequenceLock = new();
 
     public FakeAdapter(
         string id,
@@ -84,7 +89,8 @@ public sealed class FakeAdapter : IAdapter
             Status = _status,
             Metrics = new Dictionary<string, object>
             {
-                ["status"] = _status.ToString()
+                ["status"] = _status.ToString(),
+                ["sequence"] = _sequence
             }
         };
 
@@ -99,30 +105,64 @@ public sealed class FakeAdapter : IAdapter
     private async Task GenerateDataAsync(CancellationToken cancellationToken)
     {
         var random = new Random();
-        var sourceIds = new[] { "device-001", "device-002", "device-003" };
+        var tags = new[] { "temp", "humidity", "pressure" };
         
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var sourceId = sourceIds[random.Next(sourceIds.Length)];
+                // Create Activity for distributed tracing
+                using var activity = ActivitySource.StartActivity("FakeAdapter.GenerateData");
+                activity?.SetTag("adapter.id", _id);
+                
+                var tag = tags[random.Next(tags.Length)];
+                var value = tag switch
+                {
+                    "temp" => random.NextDouble() * 50 + 20, // 20-70°C
+                    "humidity" => random.NextDouble() * 100, // 0-100%
+                    "pressure" => random.NextDouble() * 200 + 900, // 900-1100 hPa
+                    _ => random.NextDouble() * 100
+                };
+
+                // Get current sequence and increment
+                long currentSequence;
+                lock (_sequenceLock)
+                {
+                    currentSequence = _sequence++;
+                }
+
+                // Get TraceId from Activity
+                var traceId = Activity.Current?.Id ?? activity?.Id;
+
                 var payload = new Dictionary<string, object>
                 {
-                    ["temperature"] = random.NextDouble() * 50 + 20, // 20-70°C
-                    ["humidity"] = random.NextDouble() * 100, // 0-100%
-                    ["pressure"] = random.NextDouble() * 200 + 900, // 900-1100 hPa
-                    ["vibration"] = random.NextDouble() * 10 // 0-10 m/s²
+                    ["value"] = value
                 };
 
                 if (DataHandler != null)
                 {
-                    await DataHandler.HandleDataAsync(_id, sourceId, DateTime.UtcNow, payload, cancellationToken)
-                        .ConfigureAwait(false);
+                    var metadata = new Dictionary<string, string>
+                    {
+                        ["tag"] = tag,
+                        ["sequence"] = currentSequence.ToString()
+                    };
+                    
+                    if (!string.IsNullOrEmpty(traceId))
+                    {
+                        metadata["traceId"] = traceId;
+                    }
+
+                    await DataHandler.HandleDataAsync(
+                        _id, 
+                        "sim-1", 
+                        DateTime.UtcNow, 
+                        payload, 
+                        metadata,
+                        cancellationToken).ConfigureAwait(false);
                 }
 
-                // Generate data every 1-3 seconds
-                var delay = TimeSpan.FromSeconds(random.NextDouble() * 2 + 1);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                // Generate data every 100ms
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -137,4 +177,3 @@ public sealed class FakeAdapter : IAdapter
         }
     }
 }
-

@@ -13,6 +13,7 @@ public interface IAdapterDataHandler
         string sourceId,
         DateTime timestamp,
         Dictionary<string, object> payload,
+        Dictionary<string, string>? metadata = null,
         CancellationToken cancellationToken = default);
 }
 
