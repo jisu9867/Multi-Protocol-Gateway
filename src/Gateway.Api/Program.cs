@@ -28,6 +28,18 @@ builder.Host.UseSerilog();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
+// CORS for Gateway.UI
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:5270", "https://localhost:7003")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
+
 // Database
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
@@ -99,6 +111,7 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 
 app.UseSerilogRequestLogging();
+app.UseCors();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 

@@ -1,0 +1,320 @@
+@page "/"
+@page "/dashboard"
+@using Gateway.Ui.Models
+@using Gateway.Ui.Services
+@inject GatewayApiClient ApiClient
+@inject ILogger<Dashboard> Logger
+@implements IAsyncDisposable
+
+<PageTitle>Gateway Dashboard</PageTitle>
+
+<div class="container-fluid py-4">
+    <h1 class="mb-4">Gateway Dashboard</h1>
+
+    @if (_errorMessage != null)
+    {
+        <div class="alert alert-danger">
+            <strong>Error:</strong> @_errorMessage
+            <br />
+            <small>Please ensure Gateway.Api is running on http://localhost:5011</small>
+        </div>
+    }
+    else if (_healthStatus == null)
+    {
+        <div class="alert alert-info">Loading...</div>
+    }
+    else
+    {
+        <!-- Status Cards -->
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Overall Status</h5>
+                        <h2 class="@GetStatusClass(_healthStatus.Status)">
+                            @_healthStatus.Status
+                        </h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Throughput (Last 1 min)</h5>
+                        <h2 class="mb-0">@_eventsCountLastMinute events</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Queue Lengths</h5>
+                        @if (_healthStatus.QueueLengths.Any())
+                        {
+                            <ul class="list-unstyled mb-0">
+                                @foreach (var queue in _healthStatus.QueueLengths)
+                                {
+                                    <li>@queue.Key: <strong>@queue.Value</strong></li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <p class="text-muted mb-0">No data</p>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Last Event</h5>
+                        <p class="mb-0">
+                            @if (!string.IsNullOrEmpty(_healthStatus.LastEventTimestamp))
+                            {
+                                @_lastEventTime
+                            }
+                            else
+                            {
+                                <span class="text-muted">No events</span>
+                            }
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Adapter Status Cards -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h3 class="mb-3">Adapter Status</h3>
+            </div>
+            @if (_healthStatus.Adapters != null && _healthStatus.Adapters.Length > 0)
+            {
+                @foreach (var adapter in _healthStatus.Adapters)
+                {
+                    <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <strong>@adapter.Id</strong>
+                                <span class="badge @GetStatusBadgeClass(adapter.Status)">@adapter.Status</span>
+                            </div>
+                            <div class="card-body">
+                                @if (!string.IsNullOrEmpty(adapter.Health?.ErrorMessage))
+                                {
+                                    <div class="alert alert-danger mb-2">
+                                        <small>@adapter.Health.ErrorMessage</small>
+                                    </div>
+                                }
+                                @if (adapter.Health?.Metrics != null && adapter.Health.Metrics.Any())
+                                {
+                                    <dl class="mb-0">
+                                        @foreach (var metric in adapter.Health.Metrics)
+                                        {
+                                            <dt class="small">@metric.Key</dt>
+                                            <dd class="small">@FormatMetricValue(metric.Value)</dd>
+                                        }
+                                    </dl>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="col-12">
+                    <p class="text-muted">No adapters found</p>
+                </div>
+            }
+        </div>
+
+        <!-- Events Table -->
+        <div class="row">
+            <div class="col-12">
+                <h3 class="mb-3">Recent Events</h3>
+                <div class="card">
+                    <div class="card-body">
+                        @if (_events == null || !_events.Any())
+                        {
+                            <p class="text-muted mb-0">No events available</p>
+                        }
+                        else
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>SourceId</th>
+                                            <th>Tag</th>
+                                            <th>Value</th>
+                                            <th>RouteKey</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var evt in _events)
+                                        {
+                                            <tr>
+                                                <td>@evt.Timestamp.ToString("HH:mm:ss.fff")</td>
+                                                <td>@evt.SourceId</td>
+                                                <td><span class="badge bg-secondary">@evt.Tag</span></td>
+                                                <td>@FormatValue(evt.Value)</td>
+                                                <td><span class="badge bg-info">@evt.RouteKey</span></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private HealthResponse? _healthStatus;
+    private EventResponse[]? _events;
+    private string _lastEventTime = string.Empty;
+    private Timer? _pollingTimer;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private long _eventsCountLastMinute = 0;
+    private string? _errorMessage;
+
+           protected override async Task OnInitializedAsync()
+           {
+               try
+               {
+                   _cancellationTokenSource = new CancellationTokenSource();
+                   // Start polling every 2 seconds (initial load will happen in LoadDataAsync)
+                   _pollingTimer = new Timer(async _ => await PollDataAsync(), null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
+                   await LoadDataAsync();
+               }
+               catch (Exception ex)
+               {
+                   Logger.LogError(ex, "Error in OnInitializedAsync");
+                   _errorMessage = $"Initialization error: {ex.Message}";
+               }
+           }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            _errorMessage = null;
+            _healthStatus = await ApiClient.GetHealthAsync(_cancellationTokenSource?.Token ?? default);
+            _events = await ApiClient.GetRecentEventsAsync(50, _cancellationTokenSource?.Token ?? default);
+            
+            if (_healthStatus?.LastEventTimestamp != null && DateTimeOffset.TryParse(_healthStatus.LastEventTimestamp, out var lastEvent))
+            {
+                _lastEventTime = lastEvent.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss");
+            }
+
+            // Calculate events in last minute (rough estimate based on recent events)
+            if (_events != null && _events.Length > 0)
+            {
+                var oneMinuteAgo = DateTime.UtcNow.AddMinutes(-1);
+                _eventsCountLastMinute = _events.Count(e => e.Timestamp >= oneMinuteAgo);
+            }
+            else
+            {
+                _eventsCountLastMinute = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading data");
+            _errorMessage = $"Failed to connect to Gateway.Api: {ex.Message}";
+            _healthStatus = null;
+            _events = null;
+        }
+        finally
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task PollDataAsync()
+    {
+        if (_cancellationTokenSource?.Token.IsCancellationRequested == true)
+            return;
+
+        try
+        {
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error polling data");
+        }
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status.ToLower() switch
+        {
+            "healthy" => "text-success",
+            "degraded" => "text-warning",
+            "unhealthy" => "text-danger",
+            _ => "text-secondary"
+        };
+    }
+
+    private string GetStatusBadgeClass(string status)
+    {
+        return status.ToLower() switch
+        {
+            "running" => "bg-success",
+            "starting" => "bg-warning",
+            "stopping" => "bg-warning",
+            "stopped" => "bg-secondary",
+            "faulted" => "bg-danger",
+            _ => "bg-secondary"
+        };
+    }
+
+    private string FormatValue(System.Text.Json.JsonElement value)
+    {
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Null)
+            return "null";
+        
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => value.GetString() ?? "null",
+            System.Text.Json.JsonValueKind.Number => value.GetRawText(),
+            System.Text.Json.JsonValueKind.True => "true",
+            System.Text.Json.JsonValueKind.False => "false",
+            _ => value.GetRawText()
+        };
+    }
+
+    private string FormatMetricValue(System.Text.Json.JsonElement value)
+    {
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Null)
+            return "null";
+        
+        return value.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => value.GetString() ?? "null",
+            System.Text.Json.JsonValueKind.Number => value.GetRawText(),
+            System.Text.Json.JsonValueKind.True => "true",
+            System.Text.Json.JsonValueKind.False => "false",
+            System.Text.Json.JsonValueKind.Object => value.GetRawText(),
+            System.Text.Json.JsonValueKind.Array => value.GetRawText(),
+            _ => value.GetRawText()
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cancellationTokenSource?.Cancel();
+        _pollingTimer?.Dispose();
+        _cancellationTokenSource?.Dispose();
+        await ValueTask.CompletedTask;
+    }
+}
