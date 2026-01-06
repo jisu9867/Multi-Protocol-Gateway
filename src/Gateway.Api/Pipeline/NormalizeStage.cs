@@ -132,13 +132,29 @@ public sealed class NormalizeStage : INormalize
             ? traceValue 
             : null;
 
+        // Ensure timestamp is UTC
+        DateTime utcTimestamp;
+        if (rawData.Timestamp.Kind == DateTimeKind.Utc)
+        {
+            utcTimestamp = rawData.Timestamp;
+        }
+        else if (rawData.Timestamp.Kind == DateTimeKind.Local)
+        {
+            utcTimestamp = rawData.Timestamp.ToUniversalTime();
+        }
+        else
+        {
+            // Unspecified - assume UTC
+            utcTimestamp = DateTime.SpecifyKind(rawData.Timestamp, DateTimeKind.Utc);
+        }
+
         return new TelemetryEvent
         {
             EventId = Guid.NewGuid(),
             SourceId = rawData.SourceId,
             Tag = tag,
             Value = value,
-            Timestamp = new DateTimeOffset(rawData.Timestamp, TimeSpan.Zero),
+            Timestamp = new DateTimeOffset(utcTimestamp, TimeSpan.Zero),
             Quality = DataQuality.Good,
             Sequence = sequence,
             TraceId = traceId

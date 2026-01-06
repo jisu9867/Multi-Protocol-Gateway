@@ -132,6 +132,10 @@ dotnet run
 
 자세한 배포 가이드는 [DEPLOYMENT.md](DEPLOYMENT.md)를 참조하세요.
 
+## 문서
+
+- [트러블슈팅 가이드](../docs/TROUBLESHOOTING.md) - 개발 및 통합 과정에서 발생한 주요 이슈와 해결 방법
+
 ## 레포지토리
 
 GitHub: `Multi-Protocol-Gateway`

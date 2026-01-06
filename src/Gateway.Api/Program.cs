@@ -1,4 +1,6 @@
 using Gateway.Adapters.FakeAdapter;
+using Gateway.Adapters.MqttAdapter;
+using Gateway.Api.Configuration;
 using Gateway.Api.Services;
 using Gateway.Api.HealthChecks;
 using Gateway.Core.Adapters;
@@ -67,6 +69,10 @@ builder.Services.AddSingleton<INormalize, NormalizeStage>();
 builder.Services.Configure<SinkOptions>(
     builder.Configuration.GetSection(SinkOptions.SectionName));
 
+// Adapter options configuration
+builder.Services.Configure<AdapterOptions>(
+    builder.Configuration.GetSection(AdapterOptions.SectionName));
+
 // Sinks (must be registered before RouteStage)
 builder.Services.AddSingleton<ISink>(sp =>
 {
@@ -95,13 +101,43 @@ builder.Services.AddSingleton<IRoute>(sp =>
 builder.Services.AddSingleton<IAdapterDataHandler, AdapterDataHandler>();
 
 // Adapters
-builder.Services.AddSingleton<IAdapter>(sp =>
+var adapterOptions = builder.Configuration.GetSection(AdapterOptions.SectionName).Get<AdapterOptions>() 
+    ?? new AdapterOptions();
+
+// FakeAdapter (optional)
+if (adapterOptions.EnableFakeAdapter)
 {
-    var logger = sp.GetRequiredService<ILogger<FakeAdapter>>();
-    var dataHandler = sp.GetRequiredService<IAdapterDataHandler>();
-    var adapter = new FakeAdapter("fake-001", logger, dataHandler);
-    return adapter;
-});
+    builder.Services.AddSingleton<IAdapter>(sp =>
+    {
+        var logger = sp.GetRequiredService<ILogger<FakeAdapter>>();
+        var dataHandler = sp.GetRequiredService<IAdapterDataHandler>();
+        var adapter = new FakeAdapter("fake-001", logger, dataHandler);
+        return adapter;
+    });
+}
+
+// MQTT Adapter (optional)
+if (adapterOptions.Mqtt.Enabled)
+{
+    builder.Services.AddSingleton<IAdapter>(sp =>
+    {
+        var logger = sp.GetRequiredService<ILogger<MqttAdapter>>();
+        var dataHandler = sp.GetRequiredService<IAdapterDataHandler>();
+        
+        var mqttOptions = new Gateway.Adapters.MqttAdapter.MqttAdapterOptions
+        {
+            Server = adapterOptions.Mqtt.Server,
+            Port = adapterOptions.Mqtt.Port,
+            ClientId = adapterOptions.Mqtt.ClientId,
+            Username = adapterOptions.Mqtt.Username,
+            Password = adapterOptions.Mqtt.Password,
+            Topic = adapterOptions.Mqtt.Topic
+        };
+        
+        var adapter = new MqttAdapter("mqtt-001", mqttOptions, logger, dataHandler);
+        return adapter;
+    });
+}
 
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();

@@ -29,11 +29,16 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=gateway;Username=gateway;Password=gateway
+      - Adapters__Mqtt__Server=host.docker.internal
+      - Adapters__Mqtt__Port=1883
+      - Adapters__Mqtt__Topic=factory/+/+/telemetry
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   ui:
     build:

@@ -276,10 +276,19 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
         // Determine route key from tag prefix (simple routing based on tag)
         var routeKey = telemetryEvent.Tag.ToLowerInvariant();
 
+        // Ensure timestamp is UTC - always use UtcDateTime property which guarantees UTC
+        var utcTimestamp = telemetryEvent.Timestamp.UtcDateTime;
+        
+        // Double-check DateTimeKind is UTC (should always be true for UtcDateTime, but be safe)
+        if (utcTimestamp.Kind != DateTimeKind.Utc)
+        {
+            utcTimestamp = DateTime.SpecifyKind(utcTimestamp, DateTimeKind.Utc);
+        }
+
         return new TelemetryEventEntity
         {
             EventId = telemetryEvent.EventId,
-            Timestamp = telemetryEvent.Timestamp.UtcDateTime,
+            Timestamp = utcTimestamp,
             SourceId = telemetryEvent.SourceId,
             Tag = telemetryEvent.Tag,
             Sequence = telemetryEvent.Sequence,
