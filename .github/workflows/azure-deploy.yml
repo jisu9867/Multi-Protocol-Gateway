@@ -86,6 +86,16 @@ jobs:
         name: api-artifacts
         path: ./publish/api
 
+    - name: Set Azure App Service environment variables
+      if: ${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING != '' }}
+      run: |
+        az webapp config appsettings set \
+          --name ${{ env.AZURE_WEBAPP_NAME }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --settings \
+            ASPNETCORE_ENVIRONMENT=Production \
+            ConnectionStrings__DefaultConnection="${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}"
+
     - name: Deploy to Azure Web App
       id: deploy-to-webapp
       uses: azure/webapps-deploy@v2
@@ -99,7 +109,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+      url: ${{ steps.deploy-to-webapp-ui.outputs.webapp-url }}
     
     steps:
     - name: Azure Login
@@ -113,8 +123,17 @@ jobs:
         name: ui-artifacts
         path: ./publish/ui
 
+    - name: Set Azure App Service environment variables for UI
+      run: |
+        az webapp config appsettings set \
+          --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --settings \
+            ASPNETCORE_ENVIRONMENT=Production \
+            GatewayApi__BaseUrl="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+
     - name: Deploy to Azure Web App
-      id: deploy-to-webapp
+      id: deploy-to-webapp-ui
       uses: azure/webapps-deploy@v2
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME_UI }}

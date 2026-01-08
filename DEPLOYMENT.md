@@ -13,34 +13,52 @@
 
    GitHub 레포지토리 Settings > Secrets and variables > Actions에서 다음 Secret 추가:
 
-   - `AZURE_CREDENTIALS`: Azure Service Principal 자격 증명 (JSON 형식)
+   **필수 Secrets:**
+   
+   - **`AZURE_CREDENTIALS`**: Azure Service Principal 자격 증명 (JSON 형식)
 
-   Azure Service Principal 생성 방법:
+     Azure Service Principal 생성 방법:
+     
+     ```bash
+     # Azure CLI로 로그인
+     az login
 
-   ```bash
-   # Azure CLI로 로그인
-   az login
+     # Service Principal 생성 (Resource Group에 Contributor 역할 부여)
+     az ad sp create-for-rbac --name "github-actions-gateway" \
+       --role contributor \
+       --scopes /subscriptions/{subscription-id}/resourceGroups/{resource-group-name} \
+       --sdk-auth
+     ```
+     
+     위 명령어의 출력 결과(JSON)를 그대로 복사하여 GitHub Secrets의 `AZURE_CREDENTIALS`에 추가하세요.
+     
+     참고:
+     - `{subscription-id}`: Azure 구독 ID (`az account show --query id -o tsv`로 확인)
+     - `{resource-group-name}`: App Service가 속한 Resource Group 이름
 
-   # Service Principal 생성 (Resource Group에 Contributor 역할 부여)
-   az ad sp create-for-rbac --name "github-actions-gateway" \
-     --role contributor \
-     --scopes /subscriptions/{subscription-id}/resourceGroups/{resource-group-name} \
-     --sdk-auth
-   ```
+   - **`AZURE_RESOURCE_GROUP`**: App Service가 속한 Resource Group 이름
+     - 예: `rg-gateway-dev`
 
-   위 명령어의 출력 결과(JSON)를 그대로 복사하여 GitHub Secrets의 `AZURE_CREDENTIALS`에 추가하세요.
+   - **`AZURE_POSTGRESQL_CONNECTION_STRING`**: Azure PostgreSQL 연결 문자열
+     
+     형식:
+     ```
+     Host={server-name}.postgres.database.azure.com;Port=5432;Database=gateway;Username={admin-username}@{server-name};Password={password};SSL Mode=Require;Trust Server Certificate=true
+     ```
+     
+     예시:
+     ```
+     Host=gateway-postgres-dev-1234.postgres.database.azure.com;Port=5432;Database=gateway;Username=gatewayadmin@gateway-postgres-dev-1234;Password=YourSecurePassword123!;SSL Mode=Require;Trust Server Certificate=true
+     ```
+     
+     ⚠️ **중요**:
+     - Username 형식: `{admin-username}@{server-name}` (서버명 포함 필수!)
+     - Password에 특수문자(`@`, `;`, `=`, `%`) 포함 시 URL 인코딩 필요하거나, GitHub Secrets에 그대로 입력해도 됨
+     - 연결 문자열은 GitHub Actions 워크플로우가 자동으로 App Service에 설정합니다
 
-   참고:
-   - `{subscription-id}`: Azure 구독 ID
-   - `{resource-group-name}`: App Service가 속한 Resource Group 이름
-
-3. **Azure Database for PostgreSQL 연결 문자열**
-
-   App Service의 Configuration에서 다음 연결 문자열 추가:
-   ```
-   ConnectionStrings__DefaultConnection
-   Host=<server>.postgres.database.azure.com;Port=5432;Database=gateway;Username=<username>;Password=<password>;Ssl Mode=Require;
-   ```
+   **참고**: 
+   - Secrets는 GitHub 레포지토리 Settings > Secrets and variables > Actions > New repository secret에서 추가
+   - 모든 Secrets는 환경 변수로 전달되므로 값이 로그에 노출되지 않도록 주의
 
 ### 배포 프로세스
 
@@ -80,24 +98,42 @@ docker pull ghcr.io/<username>/Multi-Protocol-Gateway/gateway-ui:main
 
 ### 환경 변수 설정
 
-Azure App Service Configuration에서 설정:
+**자동 설정** (GitHub Actions 워크플로우가 자동으로 설정):
+- API App Service:
+  - `ASPNETCORE_ENVIRONMENT`: Production
+  - `ConnectionStrings__DefaultConnection`: GitHub Secret의 `AZURE_POSTGRESQL_CONNECTION_STRING` 값
+
+- UI App Service:
+  - `ASPNETCORE_ENVIRONMENT`: Production
+  - `GatewayApi__BaseUrl`: API App Service URL (자동 설정)
+
+**수동 설정** (필요한 경우):
+
+Azure Portal > App Service > Configuration > Application settings에서 직접 설정할 수도 있습니다:
 
 #### API App Service
-- `ASPNETCORE_ENVIRONMENT`: Production
-- `ConnectionStrings__DefaultConnection`: PostgreSQL 연결 문자열
-- `Sinks__JsonlFilePath`: `/home/logs/telemetry.jsonl`
+- `ASPNETCORE_ENVIRONMENT`: Production (워크플로우에서 자동 설정)
+- `ConnectionStrings__DefaultConnection`: PostgreSQL 연결 문자열 (워크플로우에서 자동 설정)
 
 #### UI App Service
-- `ASPNETCORE_ENVIRONMENT`: Production
-- `ApiBaseUrl`: API App Service URL
+- `ASPNETCORE_ENVIRONMENT`: Production (워크플로우에서 자동 설정)
+- `GatewayApi__BaseUrl`: `https://{api-app-name}.azurewebsites.net` (워크플로우에서 자동 설정)
+
+⚠️ **참고**: GitHub Actions 워크플로우가 자동으로 설정하므로, GitHub Secrets만 올바르게 설정하면 수동 설정은 불필요합니다.
 
 ### 데이터베이스 마이그레이션
 
-Azure에서 실행:
+**자동 적용** (권장):
+- 애플리케이션이 시작될 때 자동으로 Migration이 적용됩니다 (`Program.cs`에 구현됨)
+- 배포 후 첫 실행 시 자동으로 데이터베이스 스키마가 생성/업데이트됩니다
+
+**수동 적용** (필요한 경우):
+
+로컬에서 Azure DB에 직접 연결하여 Migration 적용:
 
 ```bash
-# Azure Cloud Shell 또는 로컬에서
-export ConnectionStrings__DefaultConnection="Host=...;..."
+# Azure Cloud Shell 또는 로컬에서 (방화벽 규칙에 IP 추가 필요)
+export ConnectionStrings__DefaultConnection="Host={server}.postgres.database.azure.com;Port=5432;Database=gateway;Username={user}@{server};Password={password};SSL Mode=Require;Trust Server Certificate=true"
 
 dotnet ef database update \
   --project src/Gateway.Infrastructure/Gateway.Infrastructure.csproj \
@@ -106,6 +142,7 @@ dotnet ef database update \
 
 또는 Azure App Service의 Kudu Console에서:
 - Site Extensions > Entity Framework Core > Run Migration
+- 또는 SSH/Kudu Console에서 직접 `dotnet ef database update` 실행
 
 ### 모니터링
 

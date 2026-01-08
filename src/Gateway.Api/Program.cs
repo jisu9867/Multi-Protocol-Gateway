@@ -189,12 +189,24 @@ app.MapGet("/adapters", async (IEnumerable<IAdapter> adapters) =>
 
 app.MapControllers();
 
-// Ensure database is created (for development)
-if (app.Environment.IsDevelopment())
+// Ensure database migrations are applied
+using (var scope = app.Services.CreateScope())
 {
-    using var scope = app.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
-    await dbContext.Database.EnsureCreatedAsync();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    
+    try
+    {
+        logger.LogInformation("Applying database migrations...");
+        await dbContext.Database.MigrateAsync();
+        logger.LogInformation("Database migrations applied successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while applying database migrations.");
+        // Don't throw - allow app to start even if migration fails
+        // Migration errors will be visible in health checks
+    }
 }
 
 app.Run();

@@ -135,6 +135,7 @@ dotnet run
 ## 문서
 
 - [트러블슈팅 가이드](../docs/TROUBLESHOOTING.md) - 개발 및 통합 과정에서 발생한 주요 이슈와 해결 방법
+- [Azure PostgreSQL 설정 가이드](../docs/AZURE_POSTGRESQL_SETUP.md) - Azure App Service와 PostgreSQL Flexible Server 연동 가이드 (최저가 기준)
 
 ## 레포지토리
 
