@@ -70,10 +70,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
-    
+    environment: Production
     steps:
     - name: Azure Login
       uses: azure/login@v1
@@ -87,7 +84,6 @@ jobs:
         path: ./publish/api
 
     - name: Set Azure App Service environment variables
-      if: ${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING != '' }}
       run: |
         az webapp config appsettings set \
           --name ${{ env.AZURE_WEBAPP_NAME }} \
@@ -107,10 +103,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp-ui.outputs.webapp-url }}
-    
+    environment: Production
     steps:
     - name: Azure Login
       uses: azure/login@v1
