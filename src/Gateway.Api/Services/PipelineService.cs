@@ -101,11 +101,7 @@ public sealed class PipelineService : BackgroundService
                     catch (OperationCanceledException)
                     {
                         // Expected during shutdown
-                        break;
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        // Expected during shutdown
+                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                         break;
                     }
                 }
@@ -113,10 +109,7 @@ public sealed class PipelineService : BackgroundService
             catch (OperationCanceledException)
             {
                 // Expected during shutdown
-            }
-            catch (TaskCanceledException)
-            {
-                // Expected during shutdown
+                // Note: TaskCanceledException is a subclass of OperationCanceledException
             }
         }, cancellationToken);
 
@@ -136,11 +129,7 @@ public sealed class PipelineService : BackgroundService
                     catch (OperationCanceledException)
                     {
                         // Expected during shutdown
-                        break;
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        // Expected during shutdown
+                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                         break;
                     }
                 }
@@ -148,10 +137,7 @@ public sealed class PipelineService : BackgroundService
             catch (OperationCanceledException)
             {
                 // Expected during shutdown
-            }
-            catch (TaskCanceledException)
-            {
-                // Expected during shutdown
+                // Note: TaskCanceledException is a subclass of OperationCanceledException
             }
         }, cancellationToken);
 

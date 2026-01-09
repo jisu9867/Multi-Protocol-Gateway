@@ -106,10 +106,7 @@ public sealed class RouteStage : IRoute
                     catch (OperationCanceledException)
                     {
                         // Expected during shutdown - ignore silently
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        // Expected during shutdown - ignore silently
+                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                     }
                     catch (Exception ex)
                     {

@@ -155,11 +155,7 @@ public sealed class JsonlFileSink : ISink, IAsyncDisposable
             catch (OperationCanceledException)
             {
                 // Expected during shutdown - ignore silently
-                break;
-            }
-            catch (TaskCanceledException)
-            {
-                // Expected during shutdown - ignore silently
+                // Note: TaskCanceledException is a subclass of OperationCanceledException
                 break;
             }
             catch (Exception ex)
