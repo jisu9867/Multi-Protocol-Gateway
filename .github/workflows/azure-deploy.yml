@@ -85,12 +85,40 @@ jobs:
 
     - name: Set Azure App Service environment variables
       run: |
+        # Set required environment variables
         az webapp config appsettings set \
           --name ${{ env.AZURE_WEBAPP_NAME }} \
           --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
           --settings \
             ASPNETCORE_ENVIRONMENT=Production \
-            ConnectionStrings__DefaultConnection="${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}"
+            ConnectionStrings__DefaultConnection="${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}" \
+            Adapters__Mqtt__Enabled=true \
+            Adapters__Mqtt__Server="${{ secrets.AZURE_MQTT_BROKER_HOST }}" \
+            Adapters__Mqtt__Topic="factory/+/+/telemetry"
+        
+        # Set optional MQTT port (if provided, otherwise use default from appsettings.Production.json)
+        if [ -n "${{ secrets.AZURE_MQTT_BROKER_PORT }}" ]; then
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings Adapters__Mqtt__Port="${{ secrets.AZURE_MQTT_BROKER_PORT }}"
+        fi
+        
+        # Set optional MQTT username (if provided)
+        if [ -n "${{ secrets.AZURE_MQTT_USERNAME }}" ]; then
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings Adapters__Mqtt__Username="${{ secrets.AZURE_MQTT_USERNAME }}"
+        fi
+        
+        # Set optional MQTT password (if provided)
+        if [ -n "${{ secrets.AZURE_MQTT_PASSWORD }}" ]; then
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings Adapters__Mqtt__Password="${{ secrets.AZURE_MQTT_PASSWORD }}"
+        fi
 
     - name: Deploy to Azure Web App
       id: deploy-to-webapp

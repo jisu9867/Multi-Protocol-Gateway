@@ -96,6 +96,16 @@ public sealed class NormalizeStage : INormalize
                 await _outputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown - ignore silently
+                break;
+            }
+            catch (TaskCanceledException)
+            {
+                // Expected during shutdown - ignore silently
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error normalizing raw data from adapter {AdapterId}", rawData.AdapterId);

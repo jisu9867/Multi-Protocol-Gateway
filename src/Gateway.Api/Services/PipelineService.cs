@@ -88,22 +88,70 @@ public sealed class PipelineService : BackgroundService
         // Connect ingest -> normalize
         _ = Task.Run(async () =>
         {
-            await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
+            try
             {
-                await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
-                    .ConfigureAwait(false);
-                _metrics.RecordIngested();
+                await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
+                {
+                    try
+                    {
+                        await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
+                            .ConfigureAwait(false);
+                        _metrics.RecordIngested();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected during shutdown
+                        break;
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // Expected during shutdown
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown
+            }
+            catch (TaskCanceledException)
+            {
+                // Expected during shutdown
             }
         }, cancellationToken);
 
         // Connect normalize -> route
         _ = Task.Run(async () =>
         {
-            await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
+            try
             {
-                await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                    .ConfigureAwait(false);
-                _metrics.RecordNormalized();
+                await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
+                {
+                    try
+                    {
+                        await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                            .ConfigureAwait(false);
+                        _metrics.RecordNormalized();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected during shutdown
+                        break;
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // Expected during shutdown
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown
+            }
+            catch (TaskCanceledException)
+            {
+                // Expected during shutdown
             }
         }, cancellationToken);
 

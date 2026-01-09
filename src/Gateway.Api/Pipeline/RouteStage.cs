@@ -103,6 +103,14 @@ public sealed class RouteStage : IRoute
                                 .ConfigureAwait(false);
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected during shutdown - ignore silently
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        // Expected during shutdown - ignore silently
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Error routing event {EventId} to sink", telemetryEvent.EventId);

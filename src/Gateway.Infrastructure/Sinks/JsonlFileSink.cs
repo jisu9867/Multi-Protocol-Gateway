@@ -152,6 +152,16 @@ public sealed class JsonlFileSink : ISink, IAsyncDisposable
             {
                 await BufferEventAsync(telemetryEvent, cancellationToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown - ignore silently
+                break;
+            }
+            catch (TaskCanceledException)
+            {
+                // Expected during shutdown - ignore silently
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error buffering telemetry event {EventId}", telemetryEvent.EventId);
