@@ -17,24 +17,24 @@
    
    - **`AZURE_CREDENTIALS`**: Azure Service Principal 자격 증명 (JSON 형식)
 
-     Azure Service Principal 생성 방법:
-     
-     ```bash
-     # Azure CLI로 로그인
-     az login
+   Azure Service Principal 생성 방법:
 
-     # Service Principal 생성 (Resource Group에 Contributor 역할 부여)
-     az ad sp create-for-rbac --name "github-actions-gateway" \
-       --role contributor \
-       --scopes /subscriptions/{subscription-id}/resourceGroups/{resource-group-name} \
-       --sdk-auth
-     ```
-     
-     위 명령어의 출력 결과(JSON)를 그대로 복사하여 GitHub Secrets의 `AZURE_CREDENTIALS`에 추가하세요.
-     
-     참고:
+   ```bash
+   # Azure CLI로 로그인
+   az login
+
+   # Service Principal 생성 (Resource Group에 Contributor 역할 부여)
+   az ad sp create-for-rbac --name "github-actions-gateway" \
+     --role contributor \
+     --scopes /subscriptions/{subscription-id}/resourceGroups/{resource-group-name} \
+     --sdk-auth
+   ```
+
+   위 명령어의 출력 결과(JSON)를 그대로 복사하여 GitHub Secrets의 `AZURE_CREDENTIALS`에 추가하세요.
+
+   참고:
      - `{subscription-id}`: Azure 구독 ID (`az account show --query id -o tsv`로 확인)
-     - `{resource-group-name}`: App Service가 속한 Resource Group 이름
+   - `{resource-group-name}`: App Service가 속한 Resource Group 이름
 
    - **`AZURE_RESOURCE_GROUP`**: App Service가 속한 Resource Group 이름
      - 예: `rg-gateway-dev`

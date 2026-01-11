@@ -90,13 +90,13 @@ public sealed class PipelineService : BackgroundService
         {
             try
             {
-                await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
                 {
                     try
-                    {
-                        await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
-                            .ConfigureAwait(false);
-                        _metrics.RecordIngested();
+            {
+                await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
+                    .ConfigureAwait(false);
+                _metrics.RecordIngested();
                     }
                     catch (OperationCanceledException)
                     {
@@ -118,13 +118,13 @@ public sealed class PipelineService : BackgroundService
         {
             try
             {
-                await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
                 {
                     try
-                    {
-                        await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                            .ConfigureAwait(false);
-                        _metrics.RecordNormalized();
+            {
+                await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                    .ConfigureAwait(false);
+                _metrics.RecordNormalized();
                     }
                     catch (OperationCanceledException)
                     {

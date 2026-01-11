@@ -72,6 +72,33 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment: Production
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Install EF Core tools
+      run: dotnet tool install --global dotnet-ef
+
+    - name: Add dotnet-ef to PATH
+      run: echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+    - name: Restore dependencies
+      run: dotnet restore Gateway.sln
+
+    - name: Run EF Core database migrations
+      env:
+        ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}
+      run: |
+        cd src/Gateway.Api
+        dotnet ef database update \
+          --project ../Gateway.Infrastructure/Gateway.Infrastructure.csproj \
+          --startup-project Gateway.Api.csproj \
+          --verbose
+
     - name: Azure Login
       uses: azure/login@v1
       with:
