@@ -221,6 +221,80 @@ Azure Portal에서:
 
 ## 문제 해결
 
+### Mosquitto가 원격 연결을 거부함 ("Connection forcibly closed by remote host")
+
+**증상:**
+```
+Connection error: network Error : read tcp ...->...:1883: wsarecv: An existing connection was forcibly closed by the remote host.
+```
+
+**원인:**
+Mosquitto가 "local only mode"로 실행되어 원격 연결을 허용하지 않습니다. 로그를 확인하면:
+```
+Starting in local only mode. Connections will only be possible from clients running on this machine.
+```
+
+**해결 방법:**
+
+Mosquitto 컨테이너를 설정 파일과 함께 다시 생성해야 합니다:
+
+1. **기존 컨테이너 삭제:**
+   ```powershell
+   az container delete --resource-group rg-gateway-dev-korea-01 --name mosquitto-broker --yes
+   ```
+
+2. **설정 파일을 포함한 컨테이너 재생성:**
+
+   **PowerShell:**
+   ```powershell
+   $RESOURCE_GROUP = "rg-gateway-dev-korea-01"
+   $CONTAINER_NAME = "mosquitto-broker"
+   $DNS_NAME_LABEL = "mosquitto-gateway-$([DateTimeOffset]::Now.ToUnixTimeSeconds())"
+   
+   # 명령어를 올바르게 이스케이프
+   $command = '/bin/sh -c "echo listener 1883 0.0.0.0 > /mosquitto/config/mosquitto.conf && echo allow_anonymous true >> /mosquitto/config/mosquitto.conf && echo log_dest stdout >> /mosquitto/config/mosquitto.conf && echo log_type all >> /mosquitto/config/mosquitto.conf && mosquitto -c /mosquitto/config/mosquitto.conf"'
+   
+   az container create `
+     --resource-group $RESOURCE_GROUP `
+     --name $CONTAINER_NAME `
+     --image eclipse-mosquitto:2.0 `
+     --os-type Linux `
+     --cpu 1 `
+     --memory 1 `
+     --ports 1883 8883 `
+     --ip-address Public `
+     --dns-name-label $DNS_NAME_LABEL `
+     --command-line $command
+   ```
+
+   **또는 Azure Portal 사용:**
+   1. Azure Portal > Container Instances > Create
+   2. Basic 탭: 이름, 리소스 그룹, 이미지(`eclipse-mosquitto:2.0`) 설정
+   3. Networking 탭: Public IP, 포트 1883, 8883 추가
+   4. **Advanced 탭 > Command override**: 아래 명령어 입력
+      ```
+      /bin/sh -c "echo listener 1883 0.0.0.0 > /mosquitto/config/mosquitto.conf && echo allow_anonymous true >> /mosquitto/config/mosquitto.conf && echo log_dest stdout >> /mosquitto/config/mosquitto.conf && echo log_type all >> /mosquitto/config/mosquitto.conf && mosquitto -c /mosquitto/config/mosquitto.conf"
+      ```
+
+3. **연결 확인:**
+   ```powershell
+   # 로그 확인 (리스너가 0.0.0.0에 바인딩되었는지 확인)
+   az container logs --resource-group rg-gateway-dev-korea-01 --name mosquitto-broker
+   ```
+   
+   성공 시 로그에 다음이 표시됩니다:
+   ```
+   Opening ipv4 listen socket on 0.0.0.0:1883.
+   ```
+
+4. **Simulator 연결 테스트:**
+   ```powershell
+   cd Multi-Protocol-Simulator
+   .\simulator.exe run --config .\configs\azure.yaml --adapter mqtt
+   ```
+
+**참고:** Azure Container Instances는 파일 마운트를 지원하지 않으므로, 설정 파일을 command를 통해 동적으로 생성해야 합니다.
+
 ### 리소스 프로바이더가 등록되지 않음
 
 **오류 메시지:**
