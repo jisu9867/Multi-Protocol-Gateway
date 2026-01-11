@@ -9,9 +9,17 @@ public class GatewayDbContextFactory : IDesignTimeDbContextFactory<GatewayDbCont
     {
         var optionsBuilder = new DbContextOptionsBuilder<GatewayDbContext>();
         
-        // --connection으로 전달된 연결 문자열은 EF Core가 자동으로 사용
-        // 여기서는 더미 연결 문자열만 제공 (실제로는 사용되지 않음)
-        optionsBuilder.UseNpgsql("");
+        // 환경 변수에서 연결 문자열 읽기 (ConnectionStrings__DefaultConnection)
+        var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+        
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Connection string 'DefaultConnection' not found. " +
+                "Please set the 'ConnectionStrings__DefaultConnection' environment variable.");
+        }
+        
+        optionsBuilder.UseNpgsql(connectionString);
         
         return new GatewayDbContext(optionsBuilder.Options);
     }
