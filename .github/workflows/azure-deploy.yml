@@ -90,13 +90,38 @@ jobs:
       run: dotnet restore Gateway.sln
 
     - name: Run EF Core database migrations
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+        ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}
       run: |
-        export ASPNETCORE_ENVIRONMENT=Production
+        echo "=== EF Core Migration Debug Info ==="
+        echo "ASPNETCORE_ENVIRONMENT: $ASPNETCORE_ENVIRONMENT"
+        echo ""
+        echo "Connection String (masked):"
+        CONN_STR="$ConnectionStrings__DefaultConnection"
+        if [ -n "$CONN_STR" ]; then
+          # Password 부분을 마스킹 (Password=...; 부분을 Password=***;로 변경)
+          MASKED_CONN_STR=$(echo "$CONN_STR" | sed 's/Password=[^;]*/Password=***/g')
+          echo "$MASKED_CONN_STR"
+          echo ""
+          echo "Connection String Components:"
+          echo "$CONN_STR" | grep -oE 'Host=[^;]*' | sed 's/^/  /'
+          echo "$CONN_STR" | grep -oE 'Port=[^;]*' | sed 's/^/  /'
+          echo "$CONN_STR" | grep -oE 'Database=[^;]*' | sed 's/^/  /'
+          echo "$CONN_STR" | grep -oE 'Username=[^;]*' | sed 's/^/  /'
+          echo "  Password=***"
+          echo "$CONN_STR" | grep -oE 'SSL Mode=[^;]*' | sed 's/^/  /' || true
+          echo "$CONN_STR" | grep -oE 'Trust Server Certificate=[^;]*' | sed 's/^/  /' || true
+        else
+          echo "ERROR: Connection string is empty!"
+          exit 1
+        fi
+        echo ""
+        echo "Running database migrations..."
         cd src/Gateway.Api
         dotnet ef database update \
           --project ../Gateway.Infrastructure/Gateway.Infrastructure.csproj \
           --startup-project Gateway.Api.csproj \
-          --connection "${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}" \
           --verbose
 
     - name: Azure Login
