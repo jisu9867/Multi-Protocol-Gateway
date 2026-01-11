@@ -91,6 +91,7 @@ jobs:
 
     - name: Run EF Core database migrations
       env:
+        ASPNETCORE_ENVIRONMENT: Production
         ConnectionStrings__DefaultConnection: ${{ secrets.AZURE_POSTGRESQL_CONNECTION_STRING }}
       run: |
         cd src/Gateway.Api
