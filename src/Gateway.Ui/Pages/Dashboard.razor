@@ -191,8 +191,8 @@
                try
                {
                    _cancellationTokenSource = new CancellationTokenSource();
-                   // Start polling every 2 seconds (initial load will happen in LoadDataAsync)
-                   _pollingTimer = new Timer(async _ => await PollDataAsync(), null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
+                   // Start polling every 1 second to update UI in real-time
+                   _pollingTimer = new Timer(async _ => await PollDataAsync(), null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
                    await LoadDataAsync();
                }
                catch (Exception ex)

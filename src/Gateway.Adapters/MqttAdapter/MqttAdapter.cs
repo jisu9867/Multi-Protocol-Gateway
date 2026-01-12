@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Gateway.Core.Adapters;
 using Gateway.Adapters.FakeAdapter;
@@ -31,6 +33,11 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
     private long _messageCount = 0;
     private DateTime _lastMessageTime = DateTime.MinValue;
     private readonly object _metricsLock = new();
+    
+    // Message deduplication: track recently processed messages
+    private readonly HashSet<string> _recentlyProcessedMessages = new();
+    private readonly object _deduplicationLock = new();
+    private const int MaxDeduplicationCacheSize = 1000;
     
     // Circuit breaker state
     private CircuitState _circuitState = CircuitState.Closed;
@@ -357,6 +364,42 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
             var sourceId = sourceIdProp.GetString() ?? "unknown";
             var tag = tagProp.GetString() ?? "unknown";
             var value = valueProp;
+            
+            // Create message ID for deduplication (topic + sourceId + tag + value + timestamp)
+            var messageId = CreateMessageId(topic, sourceId, tag, value.GetRawText(), root);
+            
+            // Check for duplicate message BEFORE processing (critical: must be done first to prevent concurrent processing)
+            bool shouldProcess;
+            lock (_deduplicationLock)
+            {
+                if (_recentlyProcessedMessages.Contains(messageId))
+                {
+                    _logger.LogInformation("Duplicate MQTT message detected and ignored: {MessageId} (topic: {Topic}, sourceId: {SourceId}, tag: {Tag})", 
+                        messageId, topic, sourceId, tag);
+                    return;
+                }
+                
+                // Add to deduplication cache immediately to prevent concurrent processing
+                _recentlyProcessedMessages.Add(messageId);
+                shouldProcess = true;
+                
+                // Limit cache size to prevent memory leak
+                if (_recentlyProcessedMessages.Count > MaxDeduplicationCacheSize)
+                {
+                    // Remove oldest entries (simple approach: clear and rebuild)
+                    // In production, consider using a more sophisticated approach like LRU cache
+                    _recentlyProcessedMessages.Clear();
+                    _logger.LogDebug("Deduplication cache cleared due to size limit");
+                }
+            }
+            
+            if (!shouldProcess)
+            {
+                return;
+            }
+            
+            _logger.LogDebug("Processing MQTT message: {MessageId} (topic: {Topic}, sourceId: {SourceId}, tag: {Tag})", 
+                messageId, topic, sourceId, tag);
 
             // Parse timestamp (ts field) or use current time
             DateTimeOffset timestamp = DateTimeOffset.UtcNow;
@@ -451,10 +494,26 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         }
     }
 
+    private string CreateMessageId(string topic, string sourceId, string tag, string valueJson, JsonElement root)
+    {
+        // Create a hash-based ID from topic, sourceId, tag, and value only
+        // Note: We exclude timestamp to catch duplicate processing of the same message
+        // This will prevent the same message from being processed twice even if received at different times
+        var messageContent = $"{topic}|{sourceId}|{tag}|{valueJson}";
+        using var sha256 = SHA256.Create();
+        var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(messageContent));
+        return Convert.ToBase64String(hashBytes);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);
         _mqttClient?.Dispose();
         _cancellationTokenSource?.Dispose();
+        
+        lock (_deduplicationLock)
+        {
+            _recentlyProcessedMessages.Clear();
+        }
     }
 }
