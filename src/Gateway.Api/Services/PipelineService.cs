@@ -2,6 +2,7 @@ using Gateway.Adapters.FakeAdapter;
 using Gateway.Core.Adapters;
 using Gateway.Core.Pipeline;
 using Gateway.Api.Pipeline;
+using Gateway.Infrastructure.Kafka;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +20,7 @@ public sealed class PipelineService : BackgroundService
     private readonly IEnumerable<ISink> _sinks;
     private readonly IEnumerable<IAdapter> _adapters;
     private readonly IPipelineMetrics _metrics;
+    private readonly KafkaProducer? _kafkaProducer;
 
     public PipelineService(
         ILogger<PipelineService> logger,
@@ -27,7 +29,8 @@ public sealed class PipelineService : BackgroundService
         IRoute route,
         IEnumerable<ISink> sinks,
         IEnumerable<IAdapter> adapters,
-        IPipelineMetrics metrics)
+        IPipelineMetrics metrics,
+        KafkaProducer? kafkaProducer = null)
     {
         _logger = logger;
         _ingest = ingest;
@@ -36,6 +39,7 @@ public sealed class PipelineService : BackgroundService
         _sinks = sinks;
         _adapters = adapters;
         _metrics = metrics;
+        _kafkaProducer = kafkaProducer;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -47,8 +51,19 @@ public sealed class PipelineService : BackgroundService
             // Start pipeline stages
             await _ingest.StartAsync(stoppingToken).ConfigureAwait(false);
             await _normalize.StartAsync(stoppingToken).ConfigureAwait(false);
-            await _route.StartAsync(stoppingToken).ConfigureAwait(false);
 
+            // Start Kafka Producer if available
+            if (_kafkaProducer != null)
+            {
+                await _kafkaProducer.StartAsync(stoppingToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // Fallback to RouteStage if Kafka is not configured
+                await _route.StartAsync(stoppingToken).ConfigureAwait(false);
+            }
+
+            // Start sinks
             foreach (var sink in _sinks)
             {
                 await sink.StartAsync(stoppingToken).ConfigureAwait(false);
@@ -113,7 +128,7 @@ public sealed class PipelineService : BackgroundService
             }
         }, cancellationToken);
 
-        // Connect normalize -> route
+        // Connect normalize -> Kafka Producer (if available) or RouteStage (fallback)
         _ = Task.Run(async () =>
         {
             try
@@ -122,9 +137,20 @@ public sealed class PipelineService : BackgroundService
                 {
                     try
             {
-                await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                    .ConfigureAwait(false);
-                _metrics.RecordNormalized();
+                if (_kafkaProducer != null)
+                {
+                    // Send to Kafka Producer
+                    await _kafkaProducer.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                        .ConfigureAwait(false);
+                    _metrics.RecordNormalized();
+                }
+                else
+                {
+                    // Fallback to RouteStage if Kafka is not configured
+                    await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                        .ConfigureAwait(false);
+                    _metrics.RecordNormalized();
+                }
                     }
                     catch (OperationCanceledException)
                     {
@@ -140,9 +166,6 @@ public sealed class PipelineService : BackgroundService
                 // Note: TaskCanceledException is a subclass of OperationCanceledException
             }
         }, cancellationToken);
-
-        // Route stage already writes to sink input channels, so no additional connection needed
-        // Sinks process their input channels independently
         
         return Task.CompletedTask;
     }
@@ -165,7 +188,14 @@ public sealed class PipelineService : BackgroundService
         }
 
         // Stop pipeline stages
-        await _route.StopAsync().ConfigureAwait(false);
+        if (_kafkaProducer != null)
+        {
+            await _kafkaProducer.StopAsync().ConfigureAwait(false);
+        }
+        else
+        {
+            await _route.StopAsync().ConfigureAwait(false);
+        }
         await _normalize.StopAsync().ConfigureAwait(false);
         await _ingest.StopAsync().ConfigureAwait(false);
 

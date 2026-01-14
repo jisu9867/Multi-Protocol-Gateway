@@ -18,9 +18,24 @@ public sealed class TelemetryEvent
     public required DateTimeOffset Timestamp { get; init; }
 
     /// <summary>
+    /// Factory identifier
+    /// </summary>
+    public required Factory FactoryId { get; init; }
+
+    /// <summary>
     /// Source device/entity identifier
     /// </summary>
     public required string SourceId { get; init; }
+
+    /// <summary>
+    /// Equipment type
+    /// </summary>
+    public required string EquipmentType { get; init; }
+
+    /// <summary>
+    /// Equipment name
+    /// </summary>
+    public required string EquipmentName { get; init; }
 
     /// <summary>
     /// Tag for categorizing the event

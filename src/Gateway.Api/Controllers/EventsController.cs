@@ -1,3 +1,4 @@
+using Gateway.Core.Models;
 using Gateway.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -25,10 +26,16 @@ public class EventsController : ControllerBase
     /// <summary>
     /// Get recent telemetry events
     /// </summary>
+    /// <param name="factoryId">Optional factory ID filter</param>
+    /// <param name="equipmentType">Optional equipment type filter</param>
+    /// <param name="equipmentName">Optional equipment name filter</param>
     /// <param name="limit">Maximum number of events to return (default: 50, max: 1000)</param>
     /// <returns>List of recent telemetry events</returns>
     [HttpGet("recent")]
     public async Task<ActionResult<IEnumerable<object>>> GetRecentEvents(
+        [FromQuery] Factory? factoryId = null,
+        [FromQuery] string? equipmentType = null,
+        [FromQuery] string? equipmentName = null,
         [FromQuery] int limit = 50,
         CancellationToken cancellationToken = default)
     {
@@ -39,14 +46,35 @@ public class EventsController : ControllerBase
 
         try
         {
-            var events = await _dbContext.TelemetryEvents
+            var query = _dbContext.TelemetryEvents.AsQueryable();
+
+            // Apply filters
+            if (factoryId.HasValue)
+            {
+                query = query.Where(e => e.FactoryId == factoryId.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(equipmentType))
+            {
+                query = query.Where(e => e.EquipmentType == equipmentType);
+            }
+
+            if (!string.IsNullOrWhiteSpace(equipmentName))
+            {
+                query = query.Where(e => e.EquipmentName == equipmentName);
+            }
+
+            var events = await query
                 .OrderByDescending(e => e.Timestamp)
                 .Take(limit)
                 .Select(e => new
                 {
                     e.EventId,
                     e.Timestamp,
+                    e.FactoryId,
                     e.SourceId,
+                    e.EquipmentType,
+                    e.EquipmentName,
                     e.Tag,
                     e.Sequence,
                     e.Quality,

@@ -438,10 +438,58 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
                 ["deviceId"] = deviceId
             };
 
+            // Extract factory_id from payload if present
+            if (root.TryGetProperty("factoryId", out var factoryIdProp))
+            {
+                var factoryId = factoryIdProp.GetString();
+                if (!string.IsNullOrEmpty(factoryId))
+                {
+                    metadata["factory_id"] = factoryId;
+                }
+            }
+
+            // Extract equipment_type from payload if present
+            if (root.TryGetProperty("equipmentType", out var equipmentTypeProp))
+            {
+                var equipmentType = equipmentTypeProp.GetString();
+                if (!string.IsNullOrEmpty(equipmentType))
+                {
+                    metadata["equipment_type"] = equipmentType;
+                }
+            }
+
+            // Extract equipment_name from payload if present
+            if (root.TryGetProperty("equipmentName", out var equipmentNameProp))
+            {
+                var equipmentName = equipmentNameProp.GetString();
+                if (!string.IsNullOrEmpty(equipmentName))
+                {
+                    metadata["equipment_name"] = equipmentName;
+                }
+            }
+
+            // Extract sequence from payload if present
+            if (root.TryGetProperty("seq", out var seqProp))
+            {
+                if (seqProp.ValueKind == JsonValueKind.Number && seqProp.TryGetInt64(out var seq))
+                {
+                    metadata["sequence"] = seq.ToString();
+                }
+            }
+
             var traceId = Activity.Current?.Id ?? activity?.Id;
             if (!string.IsNullOrEmpty(traceId))
             {
                 metadata["traceId"] = traceId;
+            }
+            // Also check for traceId in payload
+            else if (root.TryGetProperty("traceId", out var traceIdProp))
+            {
+                var payloadTraceId = traceIdProp.GetString();
+                if (!string.IsNullOrEmpty(payloadTraceId))
+                {
+                    metadata["traceId"] = payloadTraceId;
+                }
             }
 
             var handler = _dataHandler ?? DataHandler;

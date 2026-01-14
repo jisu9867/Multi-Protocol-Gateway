@@ -8,6 +8,7 @@ using Gateway.Core.Pipeline;
 using Gateway.Infrastructure.Configuration;
 using Gateway.Infrastructure.Data;
 using Gateway.Infrastructure.Sinks;
+using Gateway.Infrastructure.Kafka;
 using Gateway.Api.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -73,15 +74,41 @@ builder.Services.Configure<SinkOptions>(
 builder.Services.Configure<AdapterOptions>(
     builder.Configuration.GetSection(AdapterOptions.SectionName));
 
-// Sinks (must be registered before RouteStage)
-builder.Services.AddSingleton<ISink>(sp =>
+// Kafka options configuration
+builder.Services.Configure<KafkaOptions>(
+    builder.Configuration.GetSection(KafkaOptions.SectionName));
+
+// Kafka Producer (sends normalized events to Kafka)
+builder.Services.AddSingleton<KafkaProducer>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<KafkaProducer>>();
+    var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
+    return new KafkaProducer(logger, kafkaOptions);
+});
+
+// Kafka Consumer (reads from Kafka and forwards to PostgreSQL)
+builder.Services.AddSingleton<KafkaConsumer>(sp =>
+{
+    var logger = sp.GetRequiredService<ILogger<KafkaConsumer>>();
+    var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
+    return new KafkaConsumer(logger, kafkaOptions);
+});
+builder.Services.AddHostedService(sp => sp.GetRequiredService<KafkaConsumer>());
+
+// PostgreSQL Sink (receives from Kafka Consumer)
+builder.Services.AddSingleton<PostgreSqlSink>(sp =>
 {
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var logger = sp.GetRequiredService<ILogger<PostgreSqlSink>>();
     var sinkOptions = sp.GetRequiredService<IOptions<SinkOptions>>();
     return new PostgreSqlSink(scopeFactory, logger, sinkOptions);
 });
+builder.Services.AddSingleton<ISink>(sp => sp.GetRequiredService<PostgreSqlSink>());
 
+// Service that connects Kafka Consumer to PostgreSQL Sink
+builder.Services.AddHostedService<KafkaToPostgreSqlService>();
+
+// JsonlFile Sink (optional, can still receive from RouteStage if needed)
 builder.Services.AddSingleton<ISink>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<JsonlFileSink>>();
@@ -89,7 +116,7 @@ builder.Services.AddSingleton<ISink>(sp =>
     return new JsonlFileSink(logger, sinkOptions);
 });
 
-// Route stage (depends on sinks)
+// Route stage (depends on sinks) - used for JsonlFile sink if needed
 builder.Services.AddSingleton<IRoute>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<RouteStage>>();

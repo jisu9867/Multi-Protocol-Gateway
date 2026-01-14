@@ -328,7 +328,10 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
         {
             EventId = telemetryEvent.EventId,
             Timestamp = utcTimestamp,
+            FactoryId = telemetryEvent.FactoryId,
             SourceId = telemetryEvent.SourceId,
+            EquipmentType = telemetryEvent.EquipmentType,
+            EquipmentName = telemetryEvent.EquipmentName,
             Tag = telemetryEvent.Tag,
             Sequence = telemetryEvent.Sequence,
             Quality = telemetryEvent.Quality,

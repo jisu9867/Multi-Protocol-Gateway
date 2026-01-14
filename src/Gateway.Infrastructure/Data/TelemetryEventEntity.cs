@@ -26,12 +26,35 @@ public sealed class TelemetryEventEntity
     public DateTime Timestamp { get; set; }
 
     /// <summary>
+    /// Factory identifier
+    /// </summary>
+    [Required]
+    [Column("factory_id")]
+    public Factory FactoryId { get; set; }
+
+    /// <summary>
     /// Source device/entity identifier
     /// </summary>
     [Required]
     [MaxLength(256)]
     [Column("source_id")]
     public string SourceId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Equipment type
+    /// </summary>
+    [Required]
+    [MaxLength(256)]
+    [Column("equipment_type")]
+    public string EquipmentType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Equipment name
+    /// </summary>
+    [Required]
+    [MaxLength(256)]
+    [Column("equipment_name")]
+    public string EquipmentName { get; set; } = string.Empty;
 
     /// <summary>
     /// Tag for categorizing the event

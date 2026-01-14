@@ -122,6 +122,30 @@ public sealed class NormalizeStage : INormalize
             value = JsonSerializer.SerializeToElement(new { value = rawData.Payload });
         }
 
+        // Extract factory_id from metadata or use default (Ulsan)
+        Factory factoryId = Factory.Ulsan;
+        if (rawData.Metadata.TryGetValue("factory_id", out var factoryIdValue))
+        {
+            if (Enum.TryParse<Factory>(factoryIdValue, ignoreCase: true, out var parsedFactory))
+            {
+                factoryId = parsedFactory;
+            }
+            else if (int.TryParse(factoryIdValue, out var factoryInt) && Enum.IsDefined(typeof(Factory), factoryInt))
+            {
+                factoryId = (Factory)factoryInt;
+            }
+        }
+
+        // Extract equipment_type from metadata or use "unknown"
+        var equipmentType = rawData.Metadata.TryGetValue("equipment_type", out var equipmentTypeValue)
+            ? equipmentTypeValue
+            : "unknown";
+
+        // Extract equipment_name from metadata or use sourceId as fallback
+        var equipmentName = rawData.Metadata.TryGetValue("equipment_name", out var equipmentNameValue)
+            ? equipmentNameValue
+            : rawData.SourceId;
+
         // Extract tag from metadata or use default
         var tag = rawData.Metadata.TryGetValue("tag", out var tagValue) 
             ? tagValue 
@@ -157,7 +181,10 @@ public sealed class NormalizeStage : INormalize
         return new TelemetryEvent
         {
             EventId = Guid.NewGuid(),
+            FactoryId = factoryId,
             SourceId = rawData.SourceId,
+            EquipmentType = equipmentType,
+            EquipmentName = equipmentName,
             Tag = tag,
             Value = value,
             Timestamp = new DateTimeOffset(utcTimestamp, TimeSpan.Zero),
