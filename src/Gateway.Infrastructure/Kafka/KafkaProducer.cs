@@ -60,14 +60,33 @@ public sealed class KafkaProducer : IAsyncDisposable
                 RequestTimeoutMs = 30000
             };
 
+            // Apply Event Hubs configuration if connection string is provided
+            string? actualTopic = _options.Topic;
+            if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+            {
+                var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
+                EventHubsHelper.ApplyEventHubsConfig(config, eventHubsConfig);
+                
+                // Override topic with Event Hub name if specified in connection string
+                if (eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName))
+                {
+                    actualTopic = eventHubName;
+                    _logger.LogInformation("Using Event Hub name from connection string as topic: {EventHubName}", eventHubName);
+                }
+            }
+
             var producerBuilder = new ProducerBuilder<string, string>(config);
             _producer = producerBuilder.Build();
 
             _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _processingTask = ProcessAsync(_cancellationTokenSource.Token);
 
-            _logger.LogInformation("Kafka Producer started (BootstrapServers: {BootstrapServers}, Topic: {Topic})",
-                _options.BootstrapServers, _options.Topic);
+            var serverInfo = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
+                ? "Azure Event Hubs" 
+                : _options.BootstrapServers;
+            
+            _logger.LogInformation("Kafka Producer started (Server: {Server}, Topic: {Topic})",
+                serverInfo, _options.Topic);
             
             _logger.LogDebug("Kafka Producer configuration: EnableIdempotence={EnableIdempotence}, Acks={Acks}, Retries={Retries}",
                 _options.Producer.EnableIdempotence, _options.Producer.Acks, _options.Producer.Retries);
@@ -172,11 +191,18 @@ public sealed class KafkaProducer : IAsyncDisposable
                 }
             };
 
-            var deliveryResult = await _producer.ProduceAsync(_options.Topic, message, cancellationToken)
+            // Use Event Hub name as topic if available, otherwise use configured topic
+            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
+                ? GetEventHubNameFromConnectionString() ?? _options.Topic
+                : _options.Topic;
+            
+            var deliveryResult = await _producer.ProduceAsync(topic, message, cancellationToken)
                 .ConfigureAwait(false);
 
-            _logger.LogDebug("Published telemetry event {EventId} to Kafka topic {Topic}, partition {Partition}, offset {Offset}",
-                telemetryEvent.EventId, deliveryResult.Topic, deliveryResult.Partition, deliveryResult.Offset);
+            _logger.LogDebug("Published telemetry event {EventId} to {Service} topic {Topic}, partition {Partition}, offset {Offset}",
+                telemetryEvent.EventId, 
+                !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) ? "Event Hub" : "Kafka",
+                deliveryResult.Topic, deliveryResult.Partition, deliveryResult.Offset);
         }
         catch (ProduceException<string, string> ex)
         {
@@ -189,6 +215,17 @@ public sealed class KafkaProducer : IAsyncDisposable
             _logger.LogError(ex, "Unexpected error publishing telemetry event {EventId} to Kafka", telemetryEvent.EventId);
             throw;
         }
+    }
+
+    private string? GetEventHubNameFromConnectionString()
+    {
+        if (string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+        {
+            return null;
+        }
+        
+        var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
+        return eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName) ? eventHubName : null;
     }
 
     public async ValueTask DisposeAsync()

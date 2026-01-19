@@ -54,16 +54,38 @@ public sealed class KafkaConsumer : BackgroundService
                 SocketTimeoutMs = 60000
             };
 
+            // Apply Event Hubs configuration if connection string is provided
+            if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+            {
+                var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
+                EventHubsHelper.ApplyEventHubsConfig(config, eventHubsConfig);
+                
+                // Log Event Hub name if specified
+                if (eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName))
+                {
+                    _logger.LogInformation("Using Event Hub name from connection string as topic: {EventHubName}", eventHubName);
+                }
+            }
+
             var consumerBuilder = new ConsumerBuilder<string, string>(config);
             _consumer = consumerBuilder.Build();
 
-            // Wait a bit for Kafka to be ready
+            // Wait a bit for Kafka/Event Hubs to be ready
             await Task.Delay(2000, stoppingToken).ConfigureAwait(false);
 
-            _consumer.Subscribe(_options.Topic);
+            // Use Event Hub name as topic if available, otherwise use configured topic
+            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
+                ? GetEventHubNameFromConnectionString() ?? _options.Topic
+                : _options.Topic;
+            
+            _consumer.Subscribe(topic);
 
-            _logger.LogInformation("Kafka Consumer started (BootstrapServers: {BootstrapServers}, Topic: {Topic}, GroupId: {GroupId})",
-                _options.BootstrapServers, _options.Topic, _options.ConsumerGroupId);
+            var serverInfo = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
+                ? "Azure Event Hubs" 
+                : _options.BootstrapServers;
+            
+            _logger.LogInformation("Kafka Consumer started (Server: {Server}, Topic: {Topic}, GroupId: {GroupId})",
+                serverInfo, _options.Topic, _options.ConsumerGroupId);
             
             _logger.LogDebug("Kafka Consumer configuration: AutoOffsetReset={AutoOffsetReset}, EnableAutoCommit={EnableAutoCommit}",
                 _options.Consumer.AutoOffsetReset, _options.Consumer.EnableAutoCommit);
@@ -94,8 +116,10 @@ public sealed class KafkaConsumer : BackgroundService
                         {
                             await _outputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken).ConfigureAwait(false);
 
-                            _logger.LogDebug("Consumed telemetry event {EventId} from Kafka topic {Topic}, partition {Partition}, offset {Offset}",
-                                telemetryEvent.EventId, consumeResult.Topic, consumeResult.Partition, consumeResult.Offset);
+                            _logger.LogDebug("Consumed telemetry event {EventId} from {Service} topic {Topic}, partition {Partition}, offset {Offset}",
+                                telemetryEvent.EventId,
+                                !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) ? "Event Hub" : "Kafka",
+                                consumeResult.Topic, consumeResult.Partition, consumeResult.Offset);
 
                             // Manual commit if auto-commit is disabled
                             if (!_options.Consumer.EnableAutoCommit)
@@ -165,6 +189,17 @@ public sealed class KafkaConsumer : BackgroundService
             _logger.LogWarning(ex, "Failed to deserialize Kafka message. Value: {Value}", message.Value);
             return null;
         }
+    }
+
+    private string? GetEventHubNameFromConnectionString()
+    {
+        if (string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+        {
+            return null;
+        }
+        
+        var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
+        return eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName) ? eventHubName : null;
     }
 
     public override void Dispose()

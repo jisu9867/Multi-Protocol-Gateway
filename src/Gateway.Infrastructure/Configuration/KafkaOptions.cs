@@ -9,11 +9,18 @@ public sealed class KafkaOptions
 
     /// <summary>
     /// Kafka bootstrap servers (comma-separated list)
+    /// For Azure Event Hubs, this will be auto-generated from EventHubsConnectionString if provided
     /// </summary>
     public string BootstrapServers { get; set; } = "localhost:9092";
 
     /// <summary>
-    /// Topic name for telemetry events
+    /// Azure Event Hubs connection string (optional, takes precedence over BootstrapServers if provided)
+    /// Format: Endpoint=sb://{namespace}.servicebus.windows.net/;SharedAccessKeyName={keyName};SharedAccessKey={key};EntityPath={eventHubName}
+    /// </summary>
+    public string? EventHubsConnectionString { get; set; }
+
+    /// <summary>
+    /// Topic name for telemetry events (Event Hub name for Azure Event Hubs)
     /// </summary>
     public string Topic { get; set; } = "telemetry-events";
 

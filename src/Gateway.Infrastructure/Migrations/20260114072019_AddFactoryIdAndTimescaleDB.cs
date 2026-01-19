@@ -14,6 +14,8 @@ namespace Gateway.Infrastructure.Migrations
                 .Annotation("Npgsql:PostgresExtension:timescaledb", ",,");
             
             // Enable TimescaleDB extension (required)
+            // Note: Azure Database for PostgreSQL Flexible Server supports TimescaleDB extension
+            // If the extension already exists, this will not fail due to IF NOT EXISTS clause
             migrationBuilder.Sql("CREATE EXTENSION IF NOT EXISTS timescaledb;");
 
             migrationBuilder.AddColumn<string>(

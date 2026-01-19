@@ -60,7 +60,7 @@ public sealed class PipelineService : BackgroundService
             else
             {
                 // Fallback to RouteStage if Kafka is not configured
-                await _route.StartAsync(stoppingToken).ConfigureAwait(false);
+            await _route.StartAsync(stoppingToken).ConfigureAwait(false);
             }
 
             // Start sinks
@@ -104,7 +104,7 @@ public sealed class PipelineService : BackgroundService
         _ = Task.Run(async () =>
         {
             try
-            {
+        {
             await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
                 {
                     try
@@ -132,9 +132,9 @@ public sealed class PipelineService : BackgroundService
         _ = Task.Run(async () =>
         {
             try
-            {
+        {
             await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
-                {
+            {
                     try
             {
                 if (_kafkaProducer != null)
@@ -147,9 +147,9 @@ public sealed class PipelineService : BackgroundService
                 else
                 {
                     // Fallback to RouteStage if Kafka is not configured
-                    await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                        .ConfigureAwait(false);
-                    _metrics.RecordNormalized();
+                await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                    .ConfigureAwait(false);
+                _metrics.RecordNormalized();
                 }
                     }
                     catch (OperationCanceledException)
@@ -194,7 +194,7 @@ public sealed class PipelineService : BackgroundService
         }
         else
         {
-            await _route.StopAsync().ConfigureAwait(false);
+        await _route.StopAsync().ConfigureAwait(false);
         }
         await _normalize.StopAsync().ConfigureAwait(false);
         await _ingest.StopAsync().ConfigureAwait(false);
