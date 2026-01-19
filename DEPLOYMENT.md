@@ -74,6 +74,20 @@
      
      ⚠️ **선택 사항**: MQTT broker가 인증을 요구하지 않는 경우 빈 문자열(`""`)로 설정하거나 Secret을 추가하지 않아도 됩니다.
 
+   - **`KAFKA_EVENTHUBS_CONNECTION_STRING`**: Azure Event Hubs 연결 문자열 (선택 사항)
+     
+     형식:
+     ```
+     Endpoint=sb://{namespace}.servicebus.windows.net/;SharedAccessKeyName={keyName};SharedAccessKey={key};EntityPath={eventHubName}
+     ```
+     
+     예시:
+     ```
+     Endpoint=sb://eh-gateway-dev.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=your-key-here;EntityPath=telemetry-events
+     ```
+     
+     ⚠️ **선택 사항**: Event Hubs를 사용하지 않는 경우 Secret을 추가하지 않아도 됩니다. 설정하지 않으면 로컬 Kafka를 사용합니다.
+
    **참고**: 
    - Secrets는 GitHub 레포지토리 Settings > Secrets and variables > Actions > New repository secret에서 추가
    - 모든 Secrets는 환경 변수로 전달되므로 값이 로그에 노출되지 않도록 주의
@@ -336,6 +350,7 @@ docker pull ghcr.io/<username>/Multi-Protocol-Gateway/gateway-ui:main
   - `Adapters__Mqtt__Topic`: `factory/+/+/telemetry`
   - `Adapters__Mqtt__Username`: GitHub Secret의 `AZURE_MQTT_USERNAME` 값 (선택 사항, 기본값: 빈 문자열)
   - `Adapters__Mqtt__Password`: GitHub Secret의 `AZURE_MQTT_PASSWORD` 값 (선택 사항, 기본값: 빈 문자열)
+  - `Kafka__EventHubsConnectionString`: GitHub Secret의 `KAFKA_EVENTHUBS_CONNECTION_STRING` 값 (선택 사항, 설정하지 않으면 로컬 Kafka 사용)
 
 - UI App Service:
   - `ASPNETCORE_ENVIRONMENT`: Production
@@ -354,6 +369,7 @@ Azure Portal > App Service > Configuration > Application settings에서 직접 �
 - `Adapters__Mqtt__Topic`: `factory/+/+/telemetry` (워크플로우에서 자동 설정)
 - `Adapters__Mqtt__Username`: MQTT 사용자명 (워크플로우에서 자동 설정, 선택 사항)
 - `Adapters__Mqtt__Password`: MQTT 비밀번호 (워크플로우에서 자동 설정, 선택 사항)
+- `Kafka__EventHubsConnectionString`: Event Hubs 연결 문자열 (워크플로우에서 자동 설정, 선택 사항)
 
 #### UI App Service
 - `ASPNETCORE_ENVIRONMENT`: Production (워크플로우에서 자동 설정)

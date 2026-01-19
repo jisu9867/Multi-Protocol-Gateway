@@ -171,6 +171,14 @@ jobs:
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --settings Adapters__Mqtt__Password="${{ secrets.AZURE_MQTT_PASSWORD }}"
         fi
+        
+        # Set Event Hubs connection string (if provided)
+        if [ -n "${{ secrets.KAFKA_EVENTHUBS_CONNECTION_STRING }}" ]; then
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings Kafka__EventHubsConnectionString="${{ secrets.KAFKA_EVENTHUBS_CONNECTION_STRING }}"
+        fi
 
     - name: Deploy to Azure Web App
       id: deploy-to-webapp
