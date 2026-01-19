@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Gateway.Infrastructure.Migrations
 {
     [DbContext(typeof(GatewayDbContext))]
-    [Migration("20260105081905_UpdateTelemetryEventSchema")]
-    partial class UpdateTelemetryEventSchema
+    [Migration("20260119082043_AddTelemetryEvents")]
+    partial class AddTelemetryEvents
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -23,14 +23,34 @@ namespace Gateway.Infrastructure.Migrations
                 .HasAnnotation("ProductVersion", "8.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "timescaledb");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("Gateway.Infrastructure.Data.TelemetryEventEntity", b =>
                 {
                     b.Property<Guid>("EventId")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("event_id");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("timestamp");
+
+                    b.Property<string>("EquipmentName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("equipment_name");
+
+                    b.Property<string>("EquipmentType")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("equipment_type");
+
+                    b.Property<int>("FactoryId")
+                        .HasColumnType("integer")
+                        .HasColumnName("factory_id");
 
                     b.Property<int>("Quality")
                         .HasColumnType("integer")
@@ -58,10 +78,6 @@ namespace Gateway.Infrastructure.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("tag");
 
-                    b.Property<DateTime>("Timestamp")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("timestamp");
-
                     b.Property<string>("TraceId")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
@@ -72,10 +88,16 @@ namespace Gateway.Infrastructure.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("value_json");
 
-                    b.HasKey("EventId");
+                    b.HasKey("EventId", "Timestamp");
 
-                    b.HasIndex("EventId")
-                        .IsUnique();
+                    b.HasIndex("EquipmentName")
+                        .HasDatabaseName("IX_telemetry_events_equipment_name");
+
+                    b.HasIndex("EquipmentType")
+                        .HasDatabaseName("IX_telemetry_events_equipment_type");
+
+                    b.HasIndex("FactoryId")
+                        .HasDatabaseName("IX_telemetry_events_factory_id");
 
                     b.HasIndex("SourceId")
                         .HasDatabaseName("IX_telemetry_events_source_id");
@@ -86,8 +108,14 @@ namespace Gateway.Infrastructure.Migrations
                     b.HasIndex("Timestamp")
                         .HasDatabaseName("IX_telemetry_events_timestamp");
 
+                    b.HasIndex("FactoryId", "Timestamp")
+                        .HasDatabaseName("IX_telemetry_events_factory_timestamp");
+
                     b.HasIndex("SourceId", "Timestamp")
                         .HasDatabaseName("IX_telemetry_events_source_timestamp");
+
+                    b.HasIndex("FactoryId", "EquipmentType", "Timestamp")
+                        .HasDatabaseName("IX_telemetry_events_factory_equipment_timestamp");
 
                     b.ToTable("telemetry_events", (string)null);
                 });

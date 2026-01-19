@@ -26,9 +26,12 @@ namespace Gateway.Infrastructure.Migrations
             modelBuilder.Entity("Gateway.Infrastructure.Data.TelemetryEventEntity", b =>
                 {
                     b.Property<Guid>("EventId")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("event_id");
+
+                    b.Property<DateTime>("Timestamp")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("timestamp");
 
                     b.Property<string>("EquipmentName")
                         .IsRequired()
@@ -72,10 +75,6 @@ namespace Gateway.Infrastructure.Migrations
                         .HasColumnType("character varying(256)")
                         .HasColumnName("tag");
 
-                    b.Property<DateTime>("Timestamp")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("timestamp");
-
                     b.Property<string>("TraceId")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
@@ -86,16 +85,13 @@ namespace Gateway.Infrastructure.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("value_json");
 
-                    b.HasKey("EventId");
+                    b.HasKey("EventId", "Timestamp");
 
                     b.HasIndex("EquipmentName")
                         .HasDatabaseName("IX_telemetry_events_equipment_name");
 
                     b.HasIndex("EquipmentType")
                         .HasDatabaseName("IX_telemetry_events_equipment_type");
-
-                    b.HasIndex("EventId")
-                        .IsUnique();
 
                     b.HasIndex("FactoryId")
                         .HasDatabaseName("IX_telemetry_events_factory_id");
