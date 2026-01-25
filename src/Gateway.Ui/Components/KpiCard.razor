@@ -1,0 +1,51 @@
+<div class="card kpi-card">
+    <div class="card-header">
+        <span class="card-title">@Title</span>
+        <div class="card-icon @IconColor">
+            @IconContent
+        </div>
+    </div>
+    <div class="kpi-value">
+        @Value.ToString("N1")<span class="kpi-unit">@Unit</span>
+    </div>
+    <div class="kpi-change @(Change >= 0 ? "positive" : "negative")">
+        @if (Change >= 0)
+        {
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                <polyline points="17 6 23 6 23 12"/>
+            </svg>
+            <span>+@Change.ToString("N1")%</span>
+        }
+        else
+        {
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
+                <polyline points="17 18 23 18 23 12"/>
+            </svg>
+            <span>@Change.ToString("N1")%</span>
+        }
+        <span style="color: var(--text-muted)">vs last period</span>
+    </div>
+    <div class="kpi-progress">
+        <div class="progress-bar">
+            <div class="progress-fill @ProgressColor" style="width: @(Math.Min(Value / Target * 100, 100))%"></div>
+        </div>
+        <div class="progress-label">
+            <span>Current</span>
+            <span>Target: @Target@Unit</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public double Value { get; set; }
+    [Parameter] public string Unit { get; set; } = "";
+    [Parameter] public double Target { get; set; }
+    [Parameter] public double Change { get; set; }
+    [Parameter] public RenderFragment? IconContent { get; set; }
+    [Parameter] public string IconColor { get; set; } = "green";
+
+    private string ProgressColor => (Value / Target) >= 0.9 ? "green" : (Value / Target) >= 0.7 ? "yellow" : "red";
+}

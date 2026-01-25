@@ -1,0 +1,238 @@
+@inject TelemetryDataService DataService
+@using Gateway.Core.Models
+@using FactoryEnum = Gateway.Core.Models.Factory
+
+<div class="card chart-card">
+    <div class="chart-header">
+        <span class="chart-title">@GetChartTitle()</span>
+        <select class="chart-select" @bind="SelectedSensorType">
+            <option value="temperature">Temperature</option>
+            <option value="humidity">Humidity</option>
+            <option value="pressure">Pressure</option>
+            <option value="vibration">Vibration</option>
+            <option value="power">Power</option>
+            <option value="flow">Flow Rate</option>
+        </select>
+    </div>
+    <div class="chart-container">
+        @if (_loading)
+        {
+            <div style="text-align: center; padding: 50px;">Loading chart data...</div>
+        }
+        else
+        {
+        <svg class="chart-svg" viewBox="0 0 600 200">
+            <defs>
+                <linearGradient id="chartGradient-@_chartId" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:var(--accent-green);stop-opacity:0.3" />
+                    <stop offset="100%" style="stop-color:var(--accent-green);stop-opacity:0" />
+                </linearGradient>
+            </defs>
+            
+            @* Grid lines *@
+            @for (int i = 0; i <= 4; i++)
+            {
+                var y = 20 + i * 40;
+                <line x1="50" y1="@y" x2="580" y2="@y" class="chart-grid-line" stroke-dasharray="4,4" />
+            }
+            
+            @* Area *@
+            <path d="@GetAreaPath()" fill="url(#chartGradient-@_chartId)" />
+            
+            @* Line *@
+            <path d="@GetLinePath()" class="chart-line" />
+            
+            @* Data points *@
+            @foreach (var (point, index) in _chartData.Select((p, i) => (p, i)))
+            {
+                var x = 50 + index * (_chartData.Count > 1 ? 530.0 / (_chartData.Count - 1) : 0);
+                var y = GetY(point.Value);
+                <circle cx="@x.ToString("F1")" cy="@y.ToString("F1")" r="3" fill="var(--accent-green)" />
+            }
+            
+            @* X-axis labels *@
+            @for (int i = 0; i < _chartData.Count; i += 4)
+            {
+                var x = 50 + i * (_chartData.Count > 1 ? 530.0 / (_chartData.Count - 1) : 0);
+                @((MarkupString)$"<text x=\"{x:F1}\" y=\"195\" class=\"chart-axis-label\" text-anchor=\"middle\">{_chartData[i].Time}</text>")
+            }
+            
+            @* Y-axis labels *@
+            @for (int i = 0; i <= 4; i++)
+            {
+                var y = 20 + i * 40;
+                var value = _maxValue - (_maxValue - _minValue) / 4 * i;
+                @((MarkupString)$"<text x=\"45\" y=\"{y + 4}\" class=\"chart-axis-label\" text-anchor=\"end\">{value:F0}</text>")
+            }
+        </svg>
+        }
+    </div>
+</div>
+
+@implements IDisposable
+
+@code {
+    [Parameter] public string Title { get; set; } = "Sensor Trend";
+    [Parameter] public string SensorType { get; set; } = "temperature";
+    [Parameter] public bool AutoTitle { get; set; } = false;
+    [Parameter] public FactoryEnum FactoryId { get; set; }
+    [Parameter] public int? LineNumber { get; set; }
+
+    private List<ChartDataPoint> _chartData = new();
+    private string _chartId = Guid.NewGuid().ToString("N")[..8];
+    private double _minValue;
+    private double _maxValue;
+    private string _selectedSensorType = "temperature";
+    private bool _loading = true;
+    private int? _lastLineNumber;
+    private FactoryEnum _lastFactoryId;
+    private System.Threading.Timer? _refreshTimer;
+    private DateTime _lastRefreshTime = DateTime.MinValue;
+    private const int RefreshIntervalMinutes = 15; // Match continuous aggregate refresh interval (15 minutes for 1-hour aggregates)
+
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedSensorType = string.IsNullOrWhiteSpace(SensorType) ? "temperature" : SensorType;
+        _lastFactoryId = FactoryId;
+        _lastLineNumber = LineNumber;
+        await LoadChartDataAsync(_selectedSensorType);
+        
+        // Set up periodic refresh timer (15 minutes to match continuous aggregate refresh)
+        _refreshTimer = new System.Threading.Timer(async _ => await RefreshChartDataIfNeeded(), null, 
+            TimeSpan.FromMinutes(RefreshIntervalMinutes), 
+            TimeSpan.FromMinutes(RefreshIntervalMinutes));
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (FactoryId != default(FactoryEnum))
+        {
+            bool shouldReload = false;
+            
+            // Reload if factory changed
+            if (_lastFactoryId != FactoryId)
+            {
+                _lastFactoryId = FactoryId;
+                shouldReload = true;
+            }
+            
+            // Reload if line number changed
+            if (_lastLineNumber != LineNumber)
+            {
+                _lastLineNumber = LineNumber;
+                shouldReload = true;
+            }
+            
+            // Reload if no data exists
+            if (_chartData.Count == 0)
+            {
+                shouldReload = true;
+            }
+            
+            if (shouldReload)
+            {
+                await LoadChartDataAsync(_selectedSensorType);
+            }
+        }
+    }
+
+    private async Task RefreshChartDataIfNeeded()
+    {
+        // Only refresh if enough time has passed and factory is set
+        if (FactoryId != default(FactoryEnum) && 
+            (DateTime.UtcNow - _lastRefreshTime).TotalMinutes >= RefreshIntervalMinutes)
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadChartDataAsync(_selectedSensorType);
+            });
+        }
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
+
+    private string SelectedSensorType
+    {
+        get => _selectedSensorType;
+        set
+        {
+            var newValue = string.IsNullOrWhiteSpace(value) ? "temperature" : value;
+            if (string.Equals(_selectedSensorType, newValue, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _selectedSensorType = newValue;
+            _ = LoadChartDataAsync(_selectedSensorType);
+        }
+    }
+
+    private string GetChartTitle()
+    {
+        if (!AutoTitle)
+            return Title;
+
+        return _selectedSensorType switch
+        {
+            "power" => "Power Consumption",
+            "flow" => "Flow Rate",
+            "temperature" => "Temperature Trend",
+            "humidity" => "Humidity Trend",
+            "pressure" => "Pressure Trend",
+            "vibration" => "Vibration Trend",
+            _ => "Sensor Trend"
+        };
+    }
+
+    private async Task LoadChartDataAsync(string sensorType)
+    {
+        if (FactoryId == default(FactoryEnum))
+            return;
+
+        _loading = true;
+        _chartData = await DataService.GetChartDataAsync(sensorType, FactoryId, LineNumber);
+        if (_chartData.Any())
+        {
+            _minValue = _chartData.Min(d => d.Value) - 5;
+            _maxValue = _chartData.Max(d => d.Value) + 5;
+        }
+        else
+        {
+            _minValue = 0;
+            _maxValue = 100;
+        }
+        _loading = false;
+        _lastRefreshTime = DateTime.UtcNow;
+        StateHasChanged();
+    }
+
+    private double GetY(double value)
+    {
+        var range = _maxValue - _minValue;
+        return 20 + (1 - (value - _minValue) / range) * 160;
+    }
+
+    private string GetLinePath()
+    {
+        if (!_chartData.Any()) return "";
+        
+        var points = _chartData.Select((d, i) => 
+        {
+            var x = 50 + i * (_chartData.Count > 1 ? 530.0 / (_chartData.Count - 1) : 0);
+            var y = GetY(d.Value);
+            return $"{x:F1},{y:F1}";
+        });
+        
+        return "M " + string.Join(" L ", points);
+    }
+
+    private string GetAreaPath()
+    {
+        if (!_chartData.Any()) return "";
+        
+        var linePath = GetLinePath();
+        var lastX = 50 + (_chartData.Count - 1) * (_chartData.Count > 1 ? 530.0 / (_chartData.Count - 1) : 0);
+        return $"{linePath} L {lastX:F1},180 L 50,180 Z";
+    }
+}

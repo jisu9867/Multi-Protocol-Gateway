@@ -1,0 +1,300 @@
+@page "/factory/{Id}"
+@inject TelemetryDataService DataService
+@inject NavigationManager Navigation
+@using Gateway.Core.Models
+@using FactoryModel = Gateway.Ui.Models.Factory
+@using FactoryEnum = Gateway.Core.Models.Factory
+@implements IDisposable
+
+<PageTitle>@(_factory?.Name ?? "Factory") - Edge Gateway Monitor</PageTitle>
+
+@if (_loading)
+{
+    <div class="page-content">
+        <p>Loading...</p>
+    </div>
+}
+else if (_factory != null)
+{
+    <PageHeader Title="@_factory.Name" Description="@_factory.Location" />
+
+    <div class="page-content">
+        <!-- KPIs -->
+        <div class="kpi-grid">
+            @foreach (var kpi in _factory.Kpis)
+            {
+                <KpiCard 
+                    Title="@kpi.Name" 
+                    Value="@kpi.Value" 
+                    Unit="@kpi.Unit" 
+                    Target="@kpi.Target" 
+                    Change="@kpi.Change"
+                    IconColor="@GetKpiColor(kpi)">
+                    <IconContent>
+                        @GetKpiIcon(kpi.Icon)
+                    </IconContent>
+                </KpiCard>
+            }
+        </div>
+
+        <!-- Sensors -->
+        <div class="section-header">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 class="section-title">Sensor Readings</h2>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span>Line:</span>
+                        <select value="@_selectedLine" @onchange="OnLineChanged" style="padding: 0.5rem; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                            @foreach (var line in _availableLines)
+                            {
+                                <option value="@line">Line @line</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="sensor-grid">
+            @if (_groupedSensors != null && _groupedSensors.Any())
+            {
+                @foreach (var group in _groupedSensors)
+                {
+                    <div style="grid-column: 1 / -1; margin-top: 1rem;">
+                        <h3 style="font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                            @group.Key
+                        </h3>
+                        <div class="sensor-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
+                            @foreach (var sensor in group.Value)
+                            {
+                                <SensorCard Sensor="@sensor" OnSensorClick="OnSensorCardClick" />
+                            }
+                        </div>
+                    </div>
+                }
+            }
+            else
+            {
+                @foreach (var sensor in _factory.Sensors)
+                {
+                    <SensorCard Sensor="@sensor" OnSensorClick="OnSensorCardClick" />
+                }
+            }
+        </div>
+
+        <!-- Trends -->
+        <div class="section-header">
+            <h2 class="section-title">Sensor Trends (24h)</h2>
+        </div>
+        <div class="chart-grid">
+            <SensorChart SensorType="temperature" AutoTitle="true" FactoryId="@_factoryId" LineNumber="@_selectedLineNumber" />
+            <SensorChart SensorType="power" AutoTitle="true" FactoryId="@_factoryId" LineNumber="@_selectedLineNumber" />
+        </div>
+    </div>
+}
+
+@if (_showRealtimeChart && _selectedSensor != null)
+{
+    <RealtimeSensorChart Sensor="@_selectedSensor" FactoryId="@_factoryId" OnClose="CloseRealtimeChart" />
+}
+else
+{
+    <div class="page-content">
+        <p>Factory not found.</p>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    private FactoryModel? _factory;
+    private FactoryEnum _factoryId;
+    private bool _loading = true;
+    private string _selectedLine = "1"; // Default to Line 1
+    private int? _selectedLineNumber = 1; // Default to Line 1
+    private List<int> _availableLines = new() { 1, 2, 3 }; // Always show 3 lines
+    private Dictionary<string, List<SensorData>>? _groupedSensors;
+    private System.Threading.Timer? _refreshTimer;
+    private DateTime _lastRefreshTime = DateTime.MinValue;
+    private const int SensorReadingsRefreshIntervalMinutes = 5; // Match continuous aggregate refresh interval (5 minutes for 10-minute aggregates)
+    private SensorData? _selectedSensor;
+    private bool _showRealtimeChart = false;
+
+    protected override Task OnInitializedAsync()
+    {
+        // Set up periodic refresh timer (5 minutes to match continuous aggregate refresh for sensor readings)
+        _refreshTimer = new System.Threading.Timer(async _ => await RefreshFactoryDataIfNeeded(), null, 
+            TimeSpan.FromMinutes(SensorReadingsRefreshIntervalMinutes), 
+            TimeSpan.FromMinutes(SensorReadingsRefreshIntervalMinutes));
+        return Task.CompletedTask;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _selectedLine = "1"; // Default to Line 1
+        _selectedLineNumber = 1;
+        
+        // Parse factory ID to enum - support multiple formats:
+        // - "factory-a", "factory-b", "factory-c" -> Ulsan, Asan, Jeonju
+        // - "ulsan", "asan", "jeonju" -> direct enum names
+        // - "1", "2", "3" -> numeric enum values
+        FactoryEnum? factoryEnum = ParseFactoryId(Id);
+        
+        if (factoryEnum.HasValue)
+        {
+            _factoryId = factoryEnum.Value;
+            await LoadFactoryData();
+        }
+        else
+        {
+            _factory = null;
+        }
+        
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task RefreshFactoryDataIfNeeded()
+    {
+        // Only refresh if enough time has passed and factory is loaded
+        if (_factory != null && 
+            (DateTime.UtcNow - _lastRefreshTime).TotalMinutes >= SensorReadingsRefreshIntervalMinutes)
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadFactoryData();
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task LoadFactoryData()
+    {
+        _selectedLineNumber = null;
+        if (!string.IsNullOrEmpty(_selectedLine) && int.TryParse(_selectedLine, out var line))
+        {
+            _selectedLineNumber = line;
+        }
+
+        // Always group by line
+        _factory = await DataService.GetFactoryAsync(Id, _selectedLineNumber, groupByLine: true);
+        
+        if (_factory != null)
+        {
+            // Group sensors by line
+            if (_factory.Sensors.Any())
+            {
+                _groupedSensors = _factory.Sensors
+                    .GroupBy(s => ExtractLineName(s.Id) ?? "Unknown")
+                    .ToDictionary(g => g.Key, g => g.ToList());
+            }
+            else
+            {
+                _groupedSensors = null;
+            }
+        }
+        
+        _lastRefreshTime = DateTime.UtcNow;
+    }
+
+    private void OnSensorCardClick(SensorData sensor)
+    {
+        _selectedSensor = sensor;
+        _showRealtimeChart = true;
+        StateHasChanged();
+    }
+
+    private void CloseRealtimeChart()
+    {
+        _showRealtimeChart = false;
+        _selectedSensor = null;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
+
+    private int? ExtractLineNumber(string sourceId)
+    {
+        if (string.IsNullOrEmpty(sourceId))
+            return null;
+
+        // Extract line number from source_id format: {factory}-line{number} or {sourceId}-{tag}
+        var parts = sourceId.Split('-');
+        foreach (var part in parts)
+        {
+            if (part.StartsWith("line", StringComparison.OrdinalIgnoreCase) && part.Length > 4)
+            {
+                if (int.TryParse(part.Substring(4), out var line))
+                {
+                    return line;
+                }
+            }
+        }
+        return null;
+    }
+
+    private string? ExtractLineName(string sourceId)
+    {
+        // Extract line name from source_id format: {factory}-line{number}
+        var lineNumber = ExtractLineNumber(sourceId);
+        if (lineNumber.HasValue)
+        {
+            return $"Line {lineNumber.Value}";
+        }
+        return null;
+    }
+
+    private async Task OnLineChanged(ChangeEventArgs e)
+    {
+        _selectedLine = e.Value?.ToString() ?? "1";
+        await LoadFactoryData();
+        StateHasChanged();
+    }
+
+    private FactoryEnum? ParseFactoryId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+
+        // Try direct enum parse first (e.g., "Ulsan", "Asan", "Jeonju")
+        if (Enum.TryParse<FactoryEnum>(id, ignoreCase: true, out var directEnum))
+        {
+            return directEnum;
+        }
+
+        // Try numeric parse (e.g., "1", "2", "3")
+        if (int.TryParse(id, out var numericValue) && Enum.IsDefined(typeof(FactoryEnum), numericValue))
+        {
+            return (FactoryEnum)numericValue;
+        }
+
+        // Try legacy format mapping (e.g., "factory-a" -> Ulsan)
+        var lowerId = id.ToLower();
+        return lowerId switch
+        {
+            "factory-a" or "a" => FactoryEnum.Ulsan,
+            "factory-b" or "b" => FactoryEnum.Asan,
+            "factory-c" or "c" => FactoryEnum.Jeonju,
+            "factory-d" or "d" => FactoryEnum.Hwaseong,
+            _ => null
+        };
+    }
+
+    private string GetKpiColor(KpiData kpi)
+    {
+        if (kpi.Name == "Defect Rate") return kpi.Value <= kpi.Target ? "green" : "red";
+        return kpi.Value >= kpi.Target * 0.9 ? "green" : kpi.Value >= kpi.Target * 0.7 ? "yellow" : "red";
+    }
+
+    private MarkupString GetKpiIcon(string icon) => icon switch
+    {
+        "gauge" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><path d=""M12 6v6l4 2""/></svg>"),
+        "clock" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><polyline points=""12 6 12 12 16 14""/></svg>"),
+        "trending-up" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><polyline points=""23 6 13.5 15.5 8.5 10.5 1 18""/><polyline points=""17 6 23 6 23 12""/></svg>"),
+        "alert-circle" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><line x1=""12"" y1=""8"" x2=""12"" y2=""12""/><line x1=""12"" y1=""16"" x2=""12.01"" y2=""16""/></svg>"),
+        _ => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/></svg>")
+    };
+}

@@ -6,13 +6,26 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 
-// Configure HttpClient for Gateway API
-var apiBaseUrl = builder.Configuration["GatewayApi:BaseUrl"] ?? "https://localhost:5001";
-builder.Services.AddHttpClient<GatewayApiClient>(client =>
+// Configure HttpClient for API calls
+var apiBaseUrl = builder.Configuration["GatewayApi:BaseUrl"] ?? "http://localhost:5011";
+// Ensure BaseAddress doesn't have trailing slash
+if (apiBaseUrl.EndsWith("/"))
+{
+    apiBaseUrl = apiBaseUrl.TrimEnd('/');
+}
+
+// Register HttpClient for TelemetryDataService
+// AddHttpClient automatically registers TelemetryDataService as scoped
+builder.Services.AddHttpClient<TelemetryDataService>(client =>
 {
     client.BaseAddress = new Uri(apiBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(10);
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
+
+// Register SignalR Service as singleton (one connection per app instance)
+builder.Services.AddSingleton<SignalRService>();
+
+// UI data services - TelemetryDataService is already registered via AddHttpClient above
 
 var app = builder.Build();
 
@@ -28,8 +41,8 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-app.UseStaticFiles();
 
+app.UseStaticFiles();
 app.UseRouting();
 
 app.MapRazorPages();

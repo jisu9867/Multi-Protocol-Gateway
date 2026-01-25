@@ -1,0 +1,82 @@
+@page "/"
+@inject TelemetryDataService DataService
+
+<PageTitle>Overview - Edge Gateway Monitor</PageTitle>
+
+<PageHeader Title="System Overview" Description="Real-time monitoring of all factory operations" />
+
+<div class="page-content">
+    <!-- KPI Summary -->
+    <div class="kpi-grid">
+        <KpiCard Title="Total Factories" Value="@_factories.Count" Unit="" Target="3" Change="0" IconColor="blue">
+            <IconContent>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <path d="M2 20h20"/>
+                    <path d="M5 20V8l5-5 5 5v12"/>
+                    <path d="M15 20V4l5 4v12"/>
+                </svg>
+            </IconContent>
+        </KpiCard>
+        
+        <KpiCard Title="Average OEE" Value="@_averageOee" Unit="%" Target="95" Change="2.1" IconColor="green">
+            <IconContent>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                </svg>
+            </IconContent>
+        </KpiCard>
+        
+        <KpiCard Title="Active Alerts" Value="@_activeAlerts" Unit="" Target="0" Change="-15" IconColor="yellow">
+            <IconContent>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+            </IconContent>
+        </KpiCard>
+        
+        <KpiCard Title="System Uptime" Value="@_systemUptime" Unit="%" Target="99.9" Change="0.3" IconColor="green">
+            <IconContent>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+            </IconContent>
+        </KpiCard>
+    </div>
+
+    <!-- Factory Status -->
+    <div class="section-header">
+        <h2 class="section-title">Factory Status</h2>
+    </div>
+    <div class="factory-grid">
+        @foreach (var factory in _factories)
+        {
+            <FactoryStatusCard Factory="@factory" />
+        }
+    </div>
+
+    <!-- Sensor Trends -->
+    <div class="section-header">
+        <h2 class="section-title">Sensor Trends (24h)</h2>
+    </div>
+    <div class="chart-grid">
+        <SensorChart SensorType="temperature" AutoTitle="true" />
+        <SensorChart SensorType="power" AutoTitle="true" />
+    </div>
+</div>
+
+@code {
+    private List<Factory> _factories = new();
+    private double _averageOee;
+    private int _activeAlerts;
+    private double _systemUptime = 99.7;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _factories = await DataService.GetFactoriesAsync();
+        _averageOee = _factories.Any() ? _factories.Average(f => f.Oee) : 0;
+        _activeAlerts = 0; // TODO: Implement alerts API endpoint
+    }
+}

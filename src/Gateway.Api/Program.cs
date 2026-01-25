@@ -3,6 +3,7 @@ using Gateway.Adapters.MqttAdapter;
 using Gateway.Api.Configuration;
 using Gateway.Api.Services;
 using Gateway.Api.HealthChecks;
+using Gateway.Api.Hubs;
 using Gateway.Core.Adapters;
 using Gateway.Core.Pipeline;
 using Gateway.Infrastructure.Configuration;
@@ -108,6 +109,10 @@ builder.Services.AddSingleton<ISink>(sp => sp.GetRequiredService<PostgreSqlSink>
 // Service that connects Kafka Consumer to PostgreSQL Sink
 builder.Services.AddHostedService<KafkaToPostgreSqlService>();
 
+// SignalR for real-time telemetry streaming
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<SignalRTelemetryService>();
+
 // JsonlFile Sink (optional, can still receive from RouteStage if needed)
 builder.Services.AddSingleton<ISink>(sp =>
 {
@@ -169,6 +174,12 @@ if (adapterOptions.Mqtt.Enabled)
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();
 
+// Continuous aggregates seed service (Development only)
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddHostedService<ContinuousAggregatesSeedService>();
+}
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
@@ -215,6 +226,9 @@ app.MapGet("/adapters", async (IEnumerable<IAdapter> adapters) =>
 });
 
 app.MapControllers();
+
+// SignalR Hub endpoint
+app.MapHub<TelemetryHub>("/hubs/telemetry");
 
 // Ensure database migrations are applied
 using (var scope = app.Services.CreateScope())

@@ -1,0 +1,125 @@
+@using Gateway.Ui.Models
+
+<div class="card sensor-card" @onclick="OnCardClick" style="cursor: pointer;">
+    <div class="card-header">
+        <span class="card-title">@Sensor.Name</span>
+        <div class="sensor-header-right">
+            <span class="sensor-status-badge @GetStatusFromProgressBar().ToString().ToLower()">
+                @GetStatusFromProgressBar()
+            </span>
+            <div class="card-icon @GetIconColor()">
+                @GetSensorIcon()
+            </div>
+        </div>
+    </div>
+    <div class="sensor-value">
+        @Sensor.Value.ToString("N1")<span class="sensor-unit">@Sensor.Unit</span>
+    </div>
+    <div class="kpi-progress">
+        <div class="progress-bar">
+            <div class="progress-fill @GetProgressColor()" style="width: @GetProgressWidth()%"></div>
+        </div>
+    </div>
+    <div class="sensor-range">
+        <span>Min: @Sensor.MinThreshold@Sensor.Unit</span>
+        <span>Max: @Sensor.MaxThreshold@Sensor.Unit</span>
+    </div>
+    <div class="sensor-updated">
+        Updated @GetTimeAgo()
+    </div>
+</div>
+
+@code {
+    [Parameter] public SensorData Sensor { get; set; } = new();
+    [Parameter] public EventCallback<SensorData> OnSensorClick { get; set; }
+
+    private async Task OnCardClick()
+    {
+        await OnSensorClick.InvokeAsync(Sensor);
+    }
+
+    private SensorStatus GetStatusFromProgressBar()
+    {
+        var range = Sensor.MaxThreshold - Sensor.MinThreshold;
+        if (range <= 0) return SensorStatus.Critical; // 범위가 없으면 Critical
+        
+        var progressWidth = GetProgressWidth();
+        
+        // Bar가 표시 안 되는 경우 (width가 0% 이하) -> Critical
+        if (progressWidth <= 0)
+            return SensorStatus.Critical;
+        
+        var position = (Sensor.Value - Sensor.MinThreshold) / range;
+        
+        // Critical: 범위를 벗어나거나 경계 10% 이내, 또는 빨간색 bar
+        if (Sensor.Value < Sensor.MinThreshold || Sensor.Value > Sensor.MaxThreshold || 
+            position > 0.9 || position < 0.1)
+            return SensorStatus.Critical;
+        
+        // Warning: 경계 20% 이내 (0.1-0.2 또는 0.8-0.9) - 노란색 bar
+        if (position > 0.8 || position < 0.2)
+            return SensorStatus.Warning;
+        
+        return SensorStatus.Normal;
+    }
+
+    private string GetIconColor() => GetStatusFromProgressBar() switch
+    {
+        SensorStatus.Normal => "green",
+        SensorStatus.Warning => "yellow",
+        SensorStatus.Critical => "red",
+        _ => "blue"
+    };
+
+    private string GetProgressColor()
+    {
+        var range = Sensor.MaxThreshold - Sensor.MinThreshold;
+        if (range <= 0) return "red"; // 범위가 없으면 빨간색
+        
+        var position = (Sensor.Value - Sensor.MinThreshold) / range;
+        
+        // Critical: 범위를 벗어나거나 경계 10% 이내 -> 빨간색 bar
+        if (Sensor.Value < Sensor.MinThreshold || Sensor.Value > Sensor.MaxThreshold || 
+            position > 0.9 || position < 0.1)
+            return "red";
+        
+        // Warning: 경계 20% 이내 (0.1-0.2 또는 0.8-0.9) -> 노란색 bar
+        if (position > 0.8 || position < 0.2)
+            return "yellow";
+        
+        return "green";
+    }
+
+    private double GetProgressWidth()
+    {
+        var range = Sensor.MaxThreshold - Sensor.MinThreshold;
+        if (range <= 0) return 0; // 범위가 없으면 bar 표시 안 함
+        
+        var calculatedWidth = (Sensor.Value - Sensor.MinThreshold) / range * 100;
+        
+        // 값이 범위를 크게 벗어나면 bar 표시 안 함 (0% 또는 음수)
+        if (calculatedWidth < 0 || calculatedWidth > 100)
+            return 0;
+        
+        return calculatedWidth;
+    }
+
+    private string GetTimeAgo()
+    {
+        var diff = DateTime.Now - Sensor.LastUpdated;
+        if (diff.TotalSeconds < 60) return $"{(int)diff.TotalSeconds}s ago";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        return $"{(int)diff.TotalHours}h ago";
+    }
+
+    private MarkupString GetSensorIcon() => Sensor.Type switch
+    {
+        "temperature" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><path d=""M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z""/></svg>"),
+        "humidity" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><path d=""M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z""/></svg>"),
+        "pressure" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><path d=""M12 6v6l4 2""/></svg>"),
+        "vibration" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><polyline points=""22 12 18 12 15 21 9 3 6 12 2 12""/></svg>"),
+        "power" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><polygon points=""13 2 3 14 12 14 11 22 21 10 12 10 13 2""/></svg>"),
+        "flow" => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><path d=""M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z""/></svg>"),
+        _ => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/></svg>")
+    };
+}

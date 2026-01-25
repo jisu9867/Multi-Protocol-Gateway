@@ -1,0 +1,32 @@
+@inject NavigationManager Navigation
+
+<div class="card factory-card" @onclick="NavigateToFactory">
+    <div class="factory-header">
+        <div class="factory-info">
+            <h3>@Factory.Name</h3>
+            <p>@Factory.Location</p>
+        </div>
+        <span class="factory-status-badge @Factory.Status.ToString().ToLower()">
+            @Factory.Status
+        </span>
+    </div>
+    <div class="factory-stats">
+        <div class="factory-stat">
+            <div class="factory-stat-value">@Factory.Oee.ToString("N1")%</div>
+            <div class="factory-stat-label">OEE</div>
+        </div>
+        <div class="factory-stat">
+            <div class="factory-stat-value">@Factory.ActiveSensors/@Factory.TotalSensors</div>
+            <div class="factory-stat-label">Active Sensors</div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public Factory Factory { get; set; } = new();
+
+    private void NavigateToFactory()
+    {
+        Navigation.NavigateTo($"/factory/{Factory.Id}");
+    }
+}

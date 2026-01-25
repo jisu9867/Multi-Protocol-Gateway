@@ -1,0 +1,109 @@
+@page "/alerts"
+@inject TelemetryDataService DataService
+
+<PageTitle>Alerts - Edge Gateway Monitor</PageTitle>
+
+<PageHeader Title="System Alerts" Description="Monitor and manage system alerts" />
+
+<div class="page-content">
+    <!-- Filters -->
+    <div class="alerts-filter">
+        <button class="filter-btn @(_filter == "all" ? "active" : "")" @onclick='() => SetFilter("all")'>
+            All (@_alerts.Count)
+        </button>
+        <button class="filter-btn @(_filter == "critical" ? "active" : "")" @onclick='() => SetFilter("critical")'>
+            Critical (@_alerts.Count(a => a.Severity == AlertSeverity.Critical))
+        </button>
+        <button class="filter-btn @(_filter == "warning" ? "active" : "")" @onclick='() => SetFilter("warning")'>
+            Warning (@_alerts.Count(a => a.Severity == AlertSeverity.Warning))
+        </button>
+        <button class="filter-btn @(_filter == "info" ? "active" : "")" @onclick='() => SetFilter("info")'>
+            Info (@_alerts.Count(a => a.Severity == AlertSeverity.Info))
+        </button>
+    </div>
+
+    <!-- Alert List -->
+    <div class="alert-list">
+        @foreach (var alert in FilteredAlerts)
+        {
+            <div class="alert-item @alert.Severity.ToString().ToLower()">
+                <div class="alert-icon @alert.Severity.ToString().ToLower()">
+                    @GetAlertIcon(alert.Severity)
+                </div>
+                <div class="alert-content">
+                    <div class="alert-header">
+                        <span class="alert-title">@alert.SensorName</span>
+                        <span class="alert-badge @alert.Severity.ToString().ToLower()">@alert.Severity</span>
+                        @if (alert.IsAcknowledged)
+                        {
+                            <span class="alert-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Acknowledged</span>
+                        }
+                    </div>
+                    <p class="alert-message">@alert.Message</p>
+                    <div class="alert-meta">
+                        <span>Factory: @alert.FactoryName</span>
+                        <span>Time: @alert.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                    </div>
+                </div>
+                <div class="alert-actions">
+                    @if (!alert.IsAcknowledged)
+                    {
+                        <button class="alert-action-btn primary" @onclick="() => AcknowledgeAlert(alert.Id)">
+                            Acknowledge
+                        </button>
+                    }
+                    <button class="alert-action-btn">
+                        View Details
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (!FilteredAlerts.Any())
+    {
+        <div class="card" style="text-align: center; padding: 3rem;">
+            <p style="color: var(--text-secondary);">No alerts found for the selected filter.</p>
+        </div>
+    }
+</div>
+
+@code {
+    private List<Alert> _alerts = new();
+    private string _filter = "all";
+
+    private IEnumerable<Alert> FilteredAlerts => _filter switch
+    {
+        "critical" => _alerts.Where(a => a.Severity == AlertSeverity.Critical),
+        "warning" => _alerts.Where(a => a.Severity == AlertSeverity.Warning),
+        "info" => _alerts.Where(a => a.Severity == AlertSeverity.Info),
+        _ => _alerts
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // TODO: Implement alerts API endpoint
+        _alerts = new List<Alert>();
+    }
+
+    private void SetFilter(string filter)
+    {
+        _filter = filter;
+    }
+
+    private void AcknowledgeAlert(string alertId)
+    {
+        var alert = _alerts.FirstOrDefault(a => a.Id == alertId);
+        if (alert != null)
+        {
+            alert.IsAcknowledged = true;
+        }
+    }
+
+    private MarkupString GetAlertIcon(AlertSeverity severity) => severity switch
+    {
+        AlertSeverity.Critical => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><line x1=""15"" y1=""9"" x2=""9"" y2=""15""/><line x1=""9"" y1=""9"" x2=""15"" y2=""15""/></svg>"),
+        AlertSeverity.Warning => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><path d=""M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z""/><line x1=""12"" y1=""9"" x2=""12"" y2=""13""/><line x1=""12"" y1=""17"" x2=""12.01"" y2=""17""/></svg>"),
+        _ => new MarkupString(@"<svg viewBox=""0 0 24 24"" fill=""none"" stroke=""currentColor"" stroke-width=""2"" width=""18"" height=""18""><circle cx=""12"" cy=""12"" r=""10""/><line x1=""12"" y1=""16"" x2=""12"" y2=""12""/><line x1=""12"" y1=""8"" x2=""12.01"" y2=""8""/></svg>")
+    };
+}

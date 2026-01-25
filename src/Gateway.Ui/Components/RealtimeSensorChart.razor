@@ -1,0 +1,346 @@
+@using Gateway.Ui.Models
+@using Gateway.Ui.Services
+@using Gateway.Core.Models
+@using FactoryEnum = Gateway.Core.Models.Factory
+@implements IAsyncDisposable
+
+<div class="modal-overlay" @onclick="CloseModal">
+    <div class="modal-content" @onclick:stopPropagation="true">
+        <div class="modal-header">
+            <h2>@GetTitle()</h2>
+            <button class="modal-close" @onclick="CloseModal">×</button>
+        </div>
+        <div class="modal-body">
+            @if (!_isConnected)
+            {
+                <div class="loading-message">
+                    <div>Connecting to real-time data stream...</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
+                        Factory: @FactoryId, Tag: @MapSensorTypeToTag(Sensor?.Type ?? "")
+                    </div>
+                </div>
+            }
+            else if (_dataPoints.Count == 0)
+            {
+                <div class="loading-message">
+                    <div>Waiting for data...</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
+                        Factory: @FactoryId, Tag: @MapSensorTypeToTag(Sensor?.Type ?? "")
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                        Listening for events from all sources...
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="chart-legend">
+                    @foreach (var series in _seriesData.Values)
+                    {
+                        <div class="legend-item">
+                            <span class="legend-color" style="background-color: @series.Color"></span>
+                            <span class="legend-label">@series.EquipmentName</span>
+                        </div>
+                    }
+                </div>
+                <div class="realtime-chart-container">
+                    <svg class="realtime-chart" viewBox="0 0 800 400">
+                        @* Grid lines *@
+                        @for (int i = 0; i <= 10; i++)
+                        {
+                            var y = 30 + i * 35;
+                            <line x1="60" y1="@y" x2="780" y2="@y" class="chart-grid-line" stroke-dasharray="2,2" />
+                        }
+                        
+                        @* Draw each series *@
+                        @foreach (var series in _seriesData.Values)
+                        {
+                            <path d="@GetLinePath(series.DataPoints)" 
+                                  class="chart-line" 
+                                  style="stroke: @series.Color; fill: none; stroke-width: 2;" />
+                            
+                            @* Data points *@
+                            @foreach (var point in series.DataPoints)
+                            {
+                                var x = GetX(point.Timestamp);
+                                var y = GetY(point.Value);
+                                <circle cx="@x" cy="@y" r="3" fill="@series.Color" />
+                            }
+                        }
+                        
+                        @* X-axis labels (time) *@
+                        @for (int i = 0; i < 10; i++)
+                        {
+                            var x = 60 + i * 72;
+                            var timeIndex = (int)(i * (_dataPoints.Count / 10.0));
+                            if (timeIndex < _dataPoints.Count)
+                            {
+                                var time = _dataPoints[timeIndex].Timestamp;
+                                @((MarkupString)$"<text x=\"{x}\" y=\"390\" class=\"chart-axis-label\" text-anchor=\"middle\">{time:HH:mm:ss}</text>")
+                            }
+                        }
+                        
+                        @* Y-axis labels (value) *@
+                        @for (int i = 0; i <= 10; i++)
+                        {
+                            var y = 30 + i * 35;
+                            var value = _maxValue - (_maxValue - _minValue) / 10 * i;
+                            @((MarkupString)$"<text x=\"55\" y=\"{y + 4}\" class=\"chart-axis-label\" text-anchor=\"end\">{value:F1}</text>")
+                        }
+                    </svg>
+                </div>
+                <div class="chart-stats">
+                    <div>Data Points: @_dataPoints.Count</div>
+                    <div>Last Update: @(_lastUpdateTime?.ToString("HH:mm:ss") ?? "N/A")</div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public SensorData? Sensor { get; set; }
+    [Parameter] public FactoryEnum FactoryId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    [Inject] private SignalRService SignalRService { get; set; } = null!;
+    [Inject] private ILogger<RealtimeSensorChart> Logger { get; set; } = null!;
+
+    private List<TelemetryEventDto> _dataPoints = new();
+    private Dictionary<string, SeriesData> _seriesData = new();
+    private bool _isConnected = false;
+    private double _minValue = 0;
+    private double _maxValue = 100;
+    private DateTime? _lastUpdateTime;
+    private const int MaxDataPoints = 100; // Keep last 100 points
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Sensor == null)
+        {
+            Logger.LogWarning("Sensor is null, cannot initialize real-time chart");
+            return;
+        }
+
+        try
+        {
+            Logger.LogInformation("Initializing real-time chart for sensor: {SensorId}, Type={SensorType}", Sensor.Id, Sensor.Type);
+            
+            await SignalRService.StartAsync();
+            _isConnected = SignalRService.IsConnected;
+            
+            if (!_isConnected)
+            {
+                Logger.LogError("SignalR connection failed");
+                return;
+            }
+
+            // Extract factory ID and tag from sensor
+            var factoryId = FactoryId.ToString();
+            var tag = MapSensorTypeToTag(Sensor.Type);
+            
+            // Subscribe to all sources for this factory and tag (sourceId can be null to receive all)
+            // This allows receiving data from any sourceId that matches the factory and tag
+            var sourceId = (string?)null; // Subscribe to all sources for this factory+tag combination
+
+            Logger.LogInformation("Subscribing to: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId} (null = all sources)", 
+                factoryId, tag, sourceId ?? "all");
+
+            // Register callback for receiving events BEFORE subscribing
+            SignalRService.OnReceiveTelemetryEvent(OnTelemetryEventReceived);
+
+            // Subscribe to sensor updates (without sourceId filter to receive all matching events)
+            await SignalRService.SubscribeToSensorAsync(factoryId, tag, sourceId);
+
+            Logger.LogInformation("Successfully subscribed to real-time sensor data");
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error initializing real-time chart");
+            _isConnected = false;
+        }
+    }
+
+    private void OnTelemetryEventReceived(TelemetryEventDto eventDto)
+    {
+        Logger.LogInformation("Received event: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}", 
+            eventDto.FactoryId, eventDto.Tag, eventDto.SourceId, eventDto.Value);
+        
+        // Filter by factory and tag only (sourceId can vary)
+        var tag = MapSensorTypeToTag(Sensor?.Type ?? "");
+        var expectedFactoryId = FactoryId.ToString();
+        
+        // Check if this event matches our subscription
+        bool matchesFactory = eventDto.FactoryId.Equals(expectedFactoryId, StringComparison.OrdinalIgnoreCase);
+        bool matchesTag = eventDto.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase);
+        
+        if (!matchesFactory || !matchesTag)
+        {
+            Logger.LogDebug("Event filtered out: Factory={MatchesFactory} (Expected={ExpectedFactory}, Got={GotFactory}), Tag={MatchesTag} (Expected={ExpectedTag}, Got={GotTag})", 
+                matchesFactory, expectedFactoryId, eventDto.FactoryId, matchesTag, tag, eventDto.Tag);
+            return;
+        }
+
+        Logger.LogInformation("Processing event: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}", 
+            eventDto.FactoryId, eventDto.Tag, eventDto.SourceId, eventDto.Value);
+
+        InvokeAsync(() =>
+        {
+            _dataPoints.Add(eventDto);
+            
+            // Keep only last MaxDataPoints
+            if (_dataPoints.Count > MaxDataPoints)
+            {
+                _dataPoints.RemoveAt(0);
+            }
+
+            // Group by equipment name (sourceId) for multiple lines
+            var key = eventDto.SourceId;
+            if (!_seriesData.ContainsKey(key))
+            {
+                _seriesData[key] = new SeriesData
+                {
+                    SourceId = key,
+                    EquipmentName = eventDto.EquipmentName,
+                    Color = GetColorForSeries(_seriesData.Count),
+                    DataPoints = new List<TelemetryEventDto>()
+                };
+            }
+
+            _seriesData[key].DataPoints.Add(eventDto);
+            
+            // Keep only last MaxDataPoints per series
+            if (_seriesData[key].DataPoints.Count > MaxDataPoints)
+            {
+                _seriesData[key].DataPoints.RemoveAt(0);
+            }
+
+            // Update min/max values
+            UpdateMinMax();
+
+            _lastUpdateTime = DateTime.Now;
+            StateHasChanged();
+        });
+    }
+
+    private void UpdateMinMax()
+    {
+        if (_dataPoints.Count == 0)
+        {
+            return;
+        }
+
+        var allValues = _dataPoints.Select(d => d.Value).ToList();
+        _minValue = allValues.Min() - (allValues.Max() - allValues.Min()) * 0.1;
+        _maxValue = allValues.Max() + (allValues.Max() - allValues.Min()) * 0.1;
+
+        if (_maxValue == _minValue)
+        {
+            _maxValue = _minValue + 10;
+        }
+    }
+
+    private double GetX(DateTimeOffset timestamp)
+    {
+        if (_dataPoints.Count == 0) return 60;
+        
+        var timeSpan = timestamp - _dataPoints[0].Timestamp;
+        var totalSpan = _dataPoints.Last().Timestamp - _dataPoints[0].Timestamp;
+        
+        if (totalSpan.TotalSeconds == 0) return 60;
+        
+        var ratio = timeSpan.TotalSeconds / totalSpan.TotalSeconds;
+        return 60 + ratio * 720; // 60 to 780
+    }
+
+    private double GetY(double value)
+    {
+        var range = _maxValue - _minValue;
+        if (range == 0) return 200;
+        
+        var ratio = (value - _minValue) / range;
+        return 30 + (1 - ratio) * 350; // 30 to 380
+    }
+
+    private string GetLinePath(List<TelemetryEventDto> points)
+    {
+        if (points.Count == 0) return "";
+        
+        var path = new System.Text.StringBuilder();
+        for (int i = 0; i < points.Count; i++)
+        {
+            var x = GetX(points[i].Timestamp);
+            var y = GetY(points[i].Value);
+            
+            if (i == 0)
+            {
+                path.Append($"M {x:F1},{y:F1}");
+            }
+            else
+            {
+                path.Append($" L {x:F1},{y:F1}");
+            }
+        }
+        
+        return path.ToString();
+    }
+
+    private string GetTitle()
+    {
+        if (Sensor == null) return "Real-time Sensor Data";
+        return $"{Sensor.Name} - Real-time";
+    }
+
+    private string MapSensorTypeToTag(string sensorType)
+    {
+        return sensorType.ToLower() switch
+        {
+            "temperature" => "temp",
+            "humidity" => "humidity",
+            "pressure" => "pressure",
+            "vibration" => "vibration",
+            "power" => "power",
+            "flow" => "flow",
+            _ => sensorType.ToLower()
+        };
+    }
+
+    private string GetColorForSeries(int index)
+    {
+        var colors = new[] { "#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4" };
+        return colors[index % colors.Length];
+    }
+
+    private async Task CloseModal()
+    {
+        if (Sensor != null)
+        {
+            var factoryId = FactoryId.ToString();
+            var tag = MapSensorTypeToTag(Sensor.Type);
+            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, null); // Unsubscribe from all sources
+            SignalRService.RemoveCallback(OnTelemetryEventReceived);
+        }
+        await OnClose.InvokeAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Sensor != null)
+        {
+            var factoryId = FactoryId.ToString();
+            var tag = MapSensorTypeToTag(Sensor.Type);
+            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, null); // Unsubscribe from all sources
+            SignalRService.RemoveCallback(OnTelemetryEventReceived);
+        }
+    }
+
+    private class SeriesData
+    {
+        public string SourceId { get; set; } = string.Empty;
+        public string EquipmentName { get; set; } = string.Empty;
+        public string Color { get; set; } = "#10b981";
+        public List<TelemetryEventDto> DataPoints { get; set; } = new();
+    }
+}
+

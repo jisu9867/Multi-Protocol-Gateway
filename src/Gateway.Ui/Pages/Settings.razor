@@ -1,0 +1,127 @@
+@page "/settings"
+
+<PageTitle>Settings - Edge Gateway Monitor</PageTitle>
+
+<PageHeader Title="Settings" Description="Configure system preferences and integrations" />
+
+<div class="page-content">
+    <!-- Gateway Settings -->
+    <div class="settings-section">
+        <h3 class="settings-section-title">Gateway Connection</h3>
+        <div class="settings-grid">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Auto-reconnect</h4>
+                    <p>Automatically reconnect to gateway on connection loss</p>
+                </div>
+                <div class="toggle @(_autoReconnect ? "active" : "")" @onclick="() => _autoReconnect = !_autoReconnect"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Real-time Updates</h4>
+                    <p>Enable real-time sensor data streaming</p>
+                </div>
+                <div class="toggle @(_realTimeUpdates ? "active" : "")" @onclick="() => _realTimeUpdates = !_realTimeUpdates"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Data Compression</h4>
+                    <p>Compress data for faster transmission</p>
+                </div>
+                <div class="toggle @(_dataCompression ? "active" : "")" @onclick="() => _dataCompression = !_dataCompression"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>SSL/TLS Encryption</h4>
+                    <p>Secure communication with edge gateway</p>
+                </div>
+                <div class="toggle @(_sslEnabled ? "active" : "")" @onclick="() => _sslEnabled = !_sslEnabled"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Settings -->
+    <div class="settings-section">
+        <h3 class="settings-section-title">Notifications</h3>
+        <div class="settings-grid">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Email Alerts</h4>
+                    <p>Send critical alerts via email</p>
+                </div>
+                <div class="toggle @(_emailAlerts ? "active" : "")" @onclick="() => _emailAlerts = !_emailAlerts"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Push Notifications</h4>
+                    <p>Browser push notifications for alerts</p>
+                </div>
+                <div class="toggle @(_pushNotifications ? "active" : "")" @onclick="() => _pushNotifications = !_pushNotifications"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Sound Alerts</h4>
+                    <p>Play sound for critical alerts</p>
+                </div>
+                <div class="toggle @(_soundAlerts ? "active" : "")" @onclick="() => _soundAlerts = !_soundAlerts"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Daily Report</h4>
+                    <p>Receive daily summary report</p>
+                </div>
+                <div class="toggle @(_dailyReport ? "active" : "")" @onclick="() => _dailyReport = !_dailyReport"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Settings -->
+    <div class="settings-section">
+        <h3 class="settings-section-title">Data Management</h3>
+        <div class="settings-grid">
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Data Retention</h4>
+                    <p>Keep historical data for analytics</p>
+                </div>
+                <div class="toggle @(_dataRetention ? "active" : "")" @onclick="() => _dataRetention = !_dataRetention"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Auto Backup</h4>
+                    <p>Automatically backup data daily</p>
+                </div>
+                <div class="toggle @(_autoBackup ? "active" : "")" @onclick="() => _autoBackup = !_autoBackup"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Export to Cloud</h4>
+                    <p>Sync data with cloud storage</p>
+                </div>
+                <div class="toggle @(_cloudExport ? "active" : "")" @onclick="() => _cloudExport = !_cloudExport"></div>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h4>Analytics Mode</h4>
+                    <p>Enable advanced analytics processing</p>
+                </div>
+                <div class="toggle @(_analyticsMode ? "active" : "")" @onclick="() => _analyticsMode = !_analyticsMode"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _autoReconnect = true;
+    private bool _realTimeUpdates = true;
+    private bool _dataCompression = false;
+    private bool _sslEnabled = true;
+    private bool _emailAlerts = true;
+    private bool _pushNotifications = false;
+    private bool _soundAlerts = true;
+    private bool _dailyReport = true;
+    private bool _dataRetention = true;
+    private bool _autoBackup = true;
+    private bool _cloudExport = false;
+    private bool _analyticsMode = true;
+}

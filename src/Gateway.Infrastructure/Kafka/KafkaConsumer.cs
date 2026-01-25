@@ -51,7 +51,9 @@ public sealed class KafkaConsumer : BackgroundService
                 FetchMaxBytes = 1024 * 1024, // 1MB
                 SessionTimeoutMs = _options.Consumer.SessionTimeoutMs,
                 EnableAutoOffsetStore = _options.Consumer.EnableAutoOffsetStore,
-                SocketTimeoutMs = 60000
+                SocketTimeoutMs = 60000,
+                // Allow auto-creation of topics in development (requires broker config: auto.create.topics.enable=true)
+                AllowAutoCreateTopics = true
             };
 
             // Apply Event Hubs configuration if connection string is provided
@@ -142,10 +144,27 @@ public sealed class KafkaConsumer : BackgroundService
                 }
                 catch (ConsumeException ex)
                 {
-                    _logger.LogError(ex, "Error consuming from Kafka: {Error}, ErrorCode: {ErrorCode}. Will retry in 1 second.",
-                        ex.Error.Reason, ex.Error.Code);
-                    // Continue processing
-                    await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
+                    // Handle UnknownTopicOrPartition error more gracefully
+                    // Check error code by string comparison for compatibility
+                    var errorCode = ex.Error.Code.ToString();
+                    if (errorCode.Contains("UnknownTopicOrPartition") || 
+                        errorCode.Contains("UnknownTopic") ||
+                        ex.Error.Code == (ErrorCode)3) // ErrorCode.UnknownTopicOrPartition = 3
+                    {
+                        _logger.LogWarning(
+                            "Kafka topic '{Topic}' does not exist yet. " +
+                            "This is normal if no messages have been produced yet. " +
+                            "Will retry in 5 seconds. " +
+                            "To create the topic manually, run: kafka-topics --create --topic {Topic} --bootstrap-server {BootstrapServers}",
+                            _options.Topic, _options.Topic, _options.BootstrapServers);
+                        await Task.Delay(5000, stoppingToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _logger.LogError(ex, "Error consuming from Kafka: {Error}, ErrorCode: {ErrorCode}. Will retry in 1 second.",
+                            ex.Error.Reason, ex.Error.Code);
+                        await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
+                    }
                 }
                 catch (KafkaException ex)
                 {
