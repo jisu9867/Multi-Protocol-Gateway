@@ -113,17 +113,23 @@ public class EventsController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("GetSensorReadings called: FactoryId={FactoryId}, LineNumber={LineNumber}, GroupByLine={GroupByLine}", 
+                factoryId, lineNumber, groupByLine);
+            
             var connection = _dbContext.Database.GetDbConnection();
             await connection.OpenAsync(cancellationToken);
 
             var results = new List<object>();
 
             // Build WHERE clause with optional line filter
-            var whereClause = "factory_id = @factoryId AND bucket >= NOW() - INTERVAL '3 hours'";
+            // Use 24 hours instead of 3 hours to include more data
+            var whereClause = "factory_id = @factoryId AND bucket >= NOW() - INTERVAL '24 hours'";
             if (lineNumber.HasValue)
             {
                 whereClause += " AND source_id LIKE @linePattern";
             }
+            
+            _logger.LogInformation("Query WHERE clause: {WhereClause}", whereClause);
 
             // Build SELECT and ORDER BY based on groupByLine
             string selectClause;
@@ -203,6 +209,9 @@ public class EventsController : ControllerBase
                     }
                 }
             }
+            
+            _logger.LogInformation("Found {Count} results from continuous aggregate for FactoryId={FactoryId}, LineNumber={LineNumber}", 
+                results.Count, factoryId, lineNumber);
 
             // If no data from continuous aggregate, fallback to direct query from source table
             if (results.Count == 0)
@@ -210,11 +219,14 @@ public class EventsController : ControllerBase
                 _logger.LogWarning("No data found in continuous aggregate, falling back to direct query");
                 
                 // Build WHERE clause for fallback query
-                var fallbackWhereClause = "factory_id = @factoryId AND timestamp >= NOW() - INTERVAL '3 hours' AND quality = 0";
+                // Use 24 hours instead of 3 hours to include more data
+                var fallbackWhereClause = "factory_id = @factoryId AND timestamp >= NOW() - INTERVAL '24 hours' AND quality = 0";
                 if (lineNumber.HasValue)
                 {
                     fallbackWhereClause += " AND source_id LIKE @linePattern";
                 }
+                
+                _logger.LogInformation("Fallback query WHERE clause: {WhereClause}", fallbackWhereClause);
 
                 string fallbackSelectClause;
                 string fallbackOrderClause;
@@ -294,8 +306,13 @@ public class EventsController : ControllerBase
                         }
                     }
                 }
+                
+                _logger.LogInformation("Found {Count} results from fallback query", results.Count);
             }
 
+            _logger.LogInformation("Returning {Count} total results for FactoryId={FactoryId}, LineNumber={LineNumber}", 
+                results.Count, factoryId, lineNumber);
+            
             return Ok(results);
         }
         catch (Exception ex)

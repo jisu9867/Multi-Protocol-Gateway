@@ -29,7 +29,7 @@ public sealed class KafkaToPostgreSqlService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogDebug("Starting Kafka to PostgreSQL connection service");
+        _logger.LogInformation("Kafka to PostgreSQL service started (using PostgreSQL Kafka Consumer Group)");
 
         // Wait a bit for Kafka Consumer to initialize
         await Task.Delay(3000, stoppingToken).ConfigureAwait(false);
@@ -41,6 +41,9 @@ public sealed class KafkaToPostgreSqlService : BackgroundService
             {
                 try
                 {
+                    _logger.LogDebug("PostgreSQL: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId})", 
+                        telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId);
+                    
                     await _postgreSqlSink.InputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken)
                         .ConfigureAwait(false);
                     

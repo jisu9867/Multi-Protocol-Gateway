@@ -87,11 +87,12 @@ builder.Services.AddSingleton<KafkaProducer>(sp =>
     return new KafkaProducer(logger, kafkaOptions);
 });
 
-// Kafka Consumer (reads from Kafka and forwards to PostgreSQL)
+// Kafka Consumer for PostgreSQL (reads from Kafka and forwards to PostgreSQL)
 builder.Services.AddSingleton<KafkaConsumer>(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<KafkaConsumer>>();
     var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
+    // Use default consumer group ID for PostgreSQL storage
     return new KafkaConsumer(logger, kafkaOptions);
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<KafkaConsumer>());
@@ -108,6 +109,34 @@ builder.Services.AddSingleton<ISink>(sp => sp.GetRequiredService<PostgreSqlSink>
 
 // Service that connects Kafka Consumer to PostgreSQL Sink
 builder.Services.AddHostedService<KafkaToPostgreSqlService>();
+
+// Kafka Consumer for SignalR (separate consumer group for real-time streaming)
+// Use KeyedService to register a second instance with different consumer group ID
+builder.Services.AddKeyedSingleton<KafkaConsumer>("SignalR", (sp, key) =>
+{
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+    var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
+    var logger = loggerFactory.CreateLogger<KafkaConsumer>();
+    var programLogger = sp.GetRequiredService<ILogger<Program>>();
+    
+    // Use separate consumer group ID for SignalR real-time streaming
+    // Use a unique consumer group ID with timestamp to ensure fresh start
+    // Use unique consumer group ID for SignalR to ensure fresh start
+    // Use "latest" offset reset to only receive new messages (real-time streaming)
+    // Change the suffix if you want to reset the consumer group
+    var signalRConsumerGroupId = $"gateway-signalr-consumer-group-v2";
+    
+    programLogger.LogInformation("Creating SignalR Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: latest", signalRConsumerGroupId);
+    logger.LogInformation("Creating SignalR Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: latest", signalRConsumerGroupId);
+    
+    var consumer = new KafkaConsumer(logger, kafkaOptions, consumerGroupId: signalRConsumerGroupId, autoOffsetReset: "latest");
+    programLogger.LogInformation("SignalR Kafka Consumer instance created successfully");
+    return consumer;
+});
+// Register SignalR Consumer as a hosted service
+// Use a wrapper service to ensure the consumer starts properly
+// KeyedService instances don't automatically start as HostedServices, so we need a wrapper
+builder.Services.AddHostedService<SignalRKafkaConsumerHostedService>();
 
 // SignalR for real-time telemetry streaming
 builder.Services.AddSignalR();
@@ -181,6 +210,10 @@ if (builder.Environment.IsDevelopment())
 }
 
 var app = builder.Build();
+
+// Log after app is built to confirm all services are registered
+var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
+appLogger.LogInformation("Application built. All hosted services should be starting now.");
 
 // Configure the HTTP request pipeline
 

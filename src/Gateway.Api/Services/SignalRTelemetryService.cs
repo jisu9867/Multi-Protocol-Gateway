@@ -2,6 +2,7 @@ using Gateway.Core.Models;
 using Gateway.Api.Hubs;
 using Gateway.Infrastructure.Kafka;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -19,23 +20,67 @@ public class SignalRTelemetryService : BackgroundService
     public SignalRTelemetryService(
         ILogger<SignalRTelemetryService> logger,
         IHubContext<TelemetryHub> hubContext,
-        KafkaConsumer kafkaConsumer)
+        [FromKeyedServices("SignalR")] KafkaConsumer kafkaConsumer)
     {
         _logger = logger;
         _hubContext = hubContext;
-        _kafkaConsumer = kafkaConsumer;
+        _kafkaConsumer = kafkaConsumer ?? throw new ArgumentNullException(nameof(kafkaConsumer));
+        
+        _logger.LogInformation("SignalRTelemetryService initialized with KafkaConsumer. OutputChannel is available: {HasChannel}", 
+            _kafkaConsumer.OutputChannel != null);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SignalR Telemetry Service started");
+        _logger.LogInformation("SignalR Telemetry Service started (using separate Kafka Consumer Group)");
+        _logger.LogInformation("KafkaConsumer instance: {ConsumerType}, OutputChannel: {HasChannel}", 
+            _kafkaConsumer.GetType().Name, _kafkaConsumer.OutputChannel != null);
+        
+        _logger.LogInformation("Waiting for Kafka Consumer to initialize...");
+
+        // Wait a bit for Kafka Consumer to initialize
+        await Task.Delay(5000, stoppingToken).ConfigureAwait(false);
+
+        _logger.LogInformation("Starting to read from SignalR Kafka Consumer OutputChannel...");
+        
+        if (_kafkaConsumer == null)
+        {
+            _logger.LogError("KafkaConsumer is null! Cannot read messages.");
+            return;
+        }
+        
+        var outputChannel = _kafkaConsumer.OutputChannel;
+        if (outputChannel == null)
+        {
+            _logger.LogError("OutputChannel is null! Cannot read messages.");
+            return;
+        }
+        
+        var reader = outputChannel.Reader;
+        if (reader == null)
+        {
+            _logger.LogError("OutputChannel Reader is null! Cannot read messages.");
+            return;
+        }
+        
+        _logger.LogInformation("OutputChannel Reader available: {HasReader}", true);
+        
+        // Check if channel is already completed
+        if (reader.Completion.IsCompleted)
+        {
+            _logger.LogWarning("OutputChannel Reader is already completed! This means the Kafka Consumer may have stopped.");
+        }
 
         try
         {
-            await foreach (var telemetryEvent in _kafkaConsumer.OutputChannel.Reader.ReadAllAsync(stoppingToken))
+            _logger.LogInformation("Waiting for messages from Kafka Consumer...");
+            await foreach (var telemetryEvent in reader.ReadAllAsync(stoppingToken))
             {
                 try
                 {
+                    _logger.LogInformation("SignalR: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value})", 
+                        telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, ExtractValue(telemetryEvent.Value));
+                    
                     await BroadcastTelemetryEvent(telemetryEvent, stoppingToken);
                 }
                 catch (Exception ex)
@@ -43,6 +88,8 @@ public class SignalRTelemetryService : BackgroundService
                     _logger.LogError(ex, "Error broadcasting telemetry event {EventId}", telemetryEvent.EventId);
                 }
             }
+            
+            _logger.LogWarning("SignalR Kafka Consumer OutputChannel reader completed - no more messages will be received");
         }
         catch (OperationCanceledException)
         {
@@ -80,15 +127,27 @@ public class SignalRTelemetryService : BackgroundService
         };
 
         // Broadcast to all clients subscribed to this factory + tag combination
-        var groupName = $"{telemetryEvent.FactoryId}:{telemetryEvent.Tag}";
+        // Use consistent casing for FactoryId (convert to string first, then use as-is)
+        var factoryIdStr = telemetryEvent.FactoryId.ToString();
+        var groupName = $"{factoryIdStr}:{telemetryEvent.Tag}";
+        var specificGroupName = $"{factoryIdStr}:{telemetryEvent.Tag}:{telemetryEvent.SourceId}";
+        
+        _logger.LogInformation("Broadcasting to groups: {GroupName} and {SpecificGroupName} (FactoryId enum={FactoryId}, string={FactoryIdStr})", 
+            groupName, specificGroupName, telemetryEvent.FactoryId, factoryIdStr);
+        
+        // Broadcast to general group (factory + tag) - this receives ALL lines for this factory+tag
         await _hubContext.Clients.Group(groupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
+        _logger.LogInformation("Sent to group {GroupName} (all lines)", groupName);
 
-        // Also broadcast to clients subscribed to specific sourceId
-        var specificGroupName = $"{telemetryEvent.FactoryId}:{telemetryEvent.Tag}:{telemetryEvent.SourceId}";
-        await _hubContext.Clients.Group(specificGroupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
+        // Also broadcast to clients subscribed to specific sourceId (specific line)
+        if (!string.IsNullOrEmpty(telemetryEvent.SourceId))
+        {
+            await _hubContext.Clients.Group(specificGroupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
+            _logger.LogInformation("Sent to group {SpecificGroupName} (specific line)", specificGroupName);
+        }
 
-        _logger.LogInformation("Broadcasted telemetry event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}) to groups {GroupName} and {SpecificGroupName}",
-            telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, value, groupName, specificGroupName);
+        _logger.LogInformation("Broadcasted telemetry event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value})",
+            telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, value);
     }
 
     private static double ExtractValue(System.Text.Json.JsonElement valueElement)

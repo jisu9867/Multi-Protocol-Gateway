@@ -20,13 +20,19 @@ public sealed class KafkaConsumer : BackgroundService
     private readonly KafkaOptions _options;
     private readonly Channel<TelemetryEvent> _outputChannel;
     private IConsumer<string, string>? _consumer;
+    private readonly string _consumerGroupId;
+    private readonly string? _autoOffsetReset;
 
     public KafkaConsumer(
         ILogger<KafkaConsumer> logger,
-        IOptions<KafkaOptions> kafkaOptions)
+        IOptions<KafkaOptions> kafkaOptions,
+        string? consumerGroupId = null,
+        string? autoOffsetReset = null)
     {
         _logger = logger;
         _options = kafkaOptions.Value;
+        _consumerGroupId = consumerGroupId ?? _options.ConsumerGroupId;
+        _autoOffsetReset = autoOffsetReset ?? _options.Consumer.AutoOffsetReset;
 
         var channelOptions = new BoundedChannelOptions(1000)
         {
@@ -39,13 +45,16 @@ public sealed class KafkaConsumer : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("Kafka Consumer [{GroupId}]: ExecuteAsync called - starting consumer", _consumerGroupId);
+        
         try
         {
+            _logger.LogInformation("Kafka Consumer [{GroupId}]: Creating consumer configuration...", _consumerGroupId);
             var config = new ConsumerConfig
             {
                 BootstrapServers = _options.BootstrapServers,
-                GroupId = _options.ConsumerGroupId,
-                AutoOffsetReset = Enum.Parse<AutoOffsetReset>(_options.Consumer.AutoOffsetReset, ignoreCase: true),
+                GroupId = _consumerGroupId,
+                AutoOffsetReset = Enum.Parse<AutoOffsetReset>(_autoOffsetReset!, ignoreCase: true),
                 EnableAutoCommit = _options.Consumer.EnableAutoCommit,
                 FetchMinBytes = 1,
                 FetchMaxBytes = 1024 * 1024, // 1MB
@@ -87,10 +96,13 @@ public sealed class KafkaConsumer : BackgroundService
                 : _options.BootstrapServers;
             
             _logger.LogInformation("Kafka Consumer started (Server: {Server}, Topic: {Topic}, GroupId: {GroupId})",
-                serverInfo, _options.Topic, _options.ConsumerGroupId);
+                serverInfo, _options.Topic, _consumerGroupId);
             
-            _logger.LogDebug("Kafka Consumer configuration: AutoOffsetReset={AutoOffsetReset}, EnableAutoCommit={EnableAutoCommit}",
-                _options.Consumer.AutoOffsetReset, _options.Consumer.EnableAutoCommit);
+            _logger.LogInformation("Kafka Consumer configuration: AutoOffsetReset={AutoOffsetReset}, EnableAutoCommit={EnableAutoCommit}, GroupId={GroupId}",
+                _autoOffsetReset, _options.Consumer.EnableAutoCommit, _consumerGroupId);
+            
+            _logger.LogInformation("Kafka Consumer [{GroupId}]: Starting to consume messages from topic {Topic}...", 
+                _consumerGroupId, _options.Topic);
         }
         catch (Exception ex)
         {
@@ -100,28 +112,40 @@ public sealed class KafkaConsumer : BackgroundService
 
         try
         {
+            _logger.LogInformation("Kafka Consumer [{GroupId}]: Entering message consumption loop", _consumerGroupId);
+            
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
+                    _logger.LogDebug("Kafka Consumer [{GroupId}]: Waiting for message from Kafka...", _consumerGroupId);
                     var consumeResult = _consumer.Consume(stoppingToken);
 
                     if (consumeResult?.Message == null)
                     {
+                        _logger.LogDebug("Kafka Consumer [{GroupId}]: Received null message, continuing...", _consumerGroupId);
                         continue;
                     }
+
+                    _logger.LogInformation("Kafka Consumer [{GroupId}]: Received raw message from topic {Topic}, partition {Partition}, offset {Offset}, message length={MessageLength}", 
+                        _consumerGroupId, consumeResult.Topic, consumeResult.Partition, consumeResult.Offset, consumeResult.Message.Value?.Length ?? 0);
 
                     try
                     {
                         var telemetryEvent = DeserializeMessage(consumeResult.Message);
                         if (telemetryEvent != null)
                         {
-                            await _outputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken).ConfigureAwait(false);
-
-                            _logger.LogDebug("Consumed telemetry event {EventId} from {Service} topic {Topic}, partition {Partition}, offset {Offset}",
+                            _logger.LogInformation("Kafka Consumer [{GroupId}]: Consumed telemetry event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}) from topic {Topic}, partition {Partition}, offset {Offset}",
+                                _consumerGroupId,
                                 telemetryEvent.EventId,
-                                !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) ? "Event Hub" : "Kafka",
+                                telemetryEvent.FactoryId,
+                                telemetryEvent.Tag,
+                                telemetryEvent.SourceId,
                                 consumeResult.Topic, consumeResult.Partition, consumeResult.Offset);
+                            
+                            await _outputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken).ConfigureAwait(false);
+                            
+                            _logger.LogInformation("Kafka Consumer [{GroupId}]: Successfully wrote event {EventId} to OutputChannel", _consumerGroupId, telemetryEvent.EventId);
 
                             // Manual commit if auto-commit is disabled
                             if (!_options.Consumer.EnableAutoCommit)

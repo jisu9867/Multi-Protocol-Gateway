@@ -92,13 +92,20 @@ public class TelemetryDataService
             }
 
             var readingsJson = await readingsResponse.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogInformation("Received sensor readings response: {ResponseLength} bytes", readingsJson.Length);
+            
             var readings = JsonSerializer.Deserialize<List<SensorReadingDto>>(readingsJson, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             }) ?? new List<SensorReadingDto>();
 
+            _logger.LogInformation("Deserialized {Count} sensor readings for factory {FactoryId}, line {LineNumber}, groupByLine {GroupByLine}", 
+                readings.Count, factoryId, lineNumber, groupByLine);
+
             // Map to sensor data
             var sensors = MapToSensorData(readings);
+            
+            _logger.LogInformation("Mapped to {Count} sensor data objects", sensors.Count);
 
             // Calculate factory status based on sensor statuses
             var factoryStatus = CalculateFactoryStatus(sensors);
@@ -159,10 +166,15 @@ public class TelemetryDataService
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogInformation("Received sensor trends response: {ResponseLength} bytes for sensor {SensorType}, factory {FactoryId}, line {LineNumber}", 
+                json.Length, sensorType, factoryId, lineNumber);
+            
             var trends = JsonSerializer.Deserialize<List<TrendDataPointDto>>(json, new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             }) ?? new List<TrendDataPointDto>();
+
+            _logger.LogInformation("Deserialized {Count} trend data points", trends.Count);
 
             return trends.Select(t => new ChartDataPoint
             {

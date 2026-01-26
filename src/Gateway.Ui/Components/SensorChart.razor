@@ -19,6 +19,13 @@
         {
             <div style="text-align: center; padding: 50px;">Loading chart data...</div>
         }
+        else if (!_chartData.Any())
+        {
+            <div style="text-align: center; padding: 50px; color: var(--text-secondary);">
+                <p>No trend data available</p>
+                <p style="font-size: 0.9rem; margin-top: 0.5rem;">Data may not be available for the selected time period.</p>
+            </div>
+        }
         else
         {
         <svg class="chart-svg" viewBox="0 0 600 200">

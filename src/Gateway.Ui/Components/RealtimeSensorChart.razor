@@ -2,6 +2,7 @@
 @using Gateway.Ui.Services
 @using Gateway.Core.Models
 @using FactoryEnum = Gateway.Core.Models.Factory
+@using System.Text.Json
 @implements IAsyncDisposable
 
 <div class="modal-overlay" @onclick="CloseModal">
@@ -62,21 +63,26 @@
                             @* Data points *@
                             @foreach (var point in series.DataPoints)
                             {
-                                var x = GetX(point.Timestamp);
+                                var x = GetXByIndex(point);
                                 var y = GetY(point.Value);
                                 <circle cx="@x" cy="@y" r="3" fill="@series.Color" />
                             }
                         }
                         
-                        @* X-axis labels (time) *@
-                        @for (int i = 0; i < 10; i++)
+                        @* X-axis labels (time) - show actual time for each data point, evenly distributed *@
+                        @if (_dataPoints.Count > 0)
                         {
-                            var x = 60 + i * 72;
-                            var timeIndex = (int)(i * (_dataPoints.Count / 10.0));
-                            if (timeIndex < _dataPoints.Count)
+                            var labelCount = Math.Min(_dataPoints.Count, 10);
+                            for (int i = 0; i < labelCount; i++)
                             {
-                                var time = _dataPoints[timeIndex].Timestamp;
-                                @((MarkupString)$"<text x=\"{x}\" y=\"390\" class=\"chart-axis-label\" text-anchor=\"middle\">{time:HH:mm:ss}</text>")
+                                var index = i;
+                                if (index >= 0 && index < _dataPoints.Count)
+                                {
+                                    var point = _dataPoints[index];
+                                    var x = GetXByIndex(point);
+                                    var time = point.Timestamp;
+                                    @((MarkupString)$"<text x=\"{x}\" y=\"390\" class=\"chart-axis-label\" text-anchor=\"middle\">{time:HH:mm:ss}</text>")
+                                }
                             }
                         }
                         
@@ -105,6 +111,8 @@
 
     [Inject] private SignalRService SignalRService { get; set; } = null!;
     [Inject] private ILogger<RealtimeSensorChart> Logger { get; set; } = null!;
+    [Inject] private HttpClient HttpClient { get; set; } = null!;
+    [Inject] private IConfiguration Configuration { get; set; } = null!;
 
     private List<TelemetryEventDto> _dataPoints = new();
     private Dictionary<string, SeriesData> _seriesData = new();
@@ -112,7 +120,7 @@
     private double _minValue = 0;
     private double _maxValue = 100;
     private DateTime? _lastUpdateTime;
-    private const int MaxDataPoints = 100; // Keep last 100 points
+    private const int MaxDataPoints = 10; // Keep last 10 points
 
     protected override async Task OnInitializedAsync()
     {
@@ -126,6 +134,20 @@
         {
             Logger.LogInformation("Initializing real-time chart for sensor: {SensorId}, Type={SensorType}", Sensor.Id, Sensor.Type);
             
+            // Extract factory ID and tag from sensor
+            var factoryId = FactoryId.ToString();
+            var tag = MapSensorTypeToTag(Sensor.Type);
+            
+            Logger.LogInformation("Loading initial data for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
+            
+            // Load initial latest data before subscribing to real-time updates
+            await LoadInitialDataAsync(factoryId, tag);
+            
+            Logger.LogInformation("Initial data loaded. Data points count: {Count}", _dataPoints.Count);
+            
+            // Force UI update after loading initial data
+            StateHasChanged();
+            
             await SignalRService.StartAsync();
             _isConnected = SignalRService.IsConnected;
             
@@ -135,10 +157,6 @@
                 return;
             }
 
-            // Extract factory ID and tag from sensor
-            var factoryId = FactoryId.ToString();
-            var tag = MapSensorTypeToTag(Sensor.Type);
-            
             // Subscribe to all sources for this factory and tag (sourceId can be null to receive all)
             // This allows receiving data from any sourceId that matches the factory and tag
             var sourceId = (string?)null; // Subscribe to all sources for this factory+tag combination
@@ -160,6 +178,274 @@
             Logger.LogError(ex, "Error initializing real-time chart");
             _isConnected = false;
         }
+    }
+
+    private async Task LoadInitialDataAsync(string factoryId, string tag)
+    {
+        try
+        {
+            Logger.LogInformation("Loading initial latest data for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
+            
+            // Get latest events from API - get more to ensure we have enough after filtering by tag
+            // Use the same base URL as TelemetryDataService
+            var apiBaseUrl = Configuration["GatewayApi:BaseUrl"] ?? "http://localhost:5011";
+            if (apiBaseUrl.EndsWith("/"))
+            {
+                apiBaseUrl = apiBaseUrl.TrimEnd('/');
+            }
+            
+            // Parse factoryId string to enum for API call
+            FactoryEnum? factoryEnum = null;
+            if (Enum.TryParse<FactoryEnum>(factoryId, ignoreCase: true, out var parsedFactory))
+            {
+                factoryEnum = parsedFactory;
+            }
+            
+            var url = factoryEnum.HasValue
+                ? $"{apiBaseUrl}/api/events/recent?factoryId={factoryEnum.Value}&limit={MaxDataPoints * 10}" // Get more to filter by tag
+                : $"{apiBaseUrl}/api/events/recent?limit={MaxDataPoints * 10}";
+            
+            Logger.LogInformation("Calling API: {Url}", url);
+            var response = await HttpClient.GetAsync(url);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                Logger.LogInformation("Received {Length} bytes from API", json.Length);
+                
+                var options = new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+                
+                // Deserialize as dynamic objects first, then convert to TelemetryEventDto
+                var rawEvents = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(json, options) ?? new List<System.Text.Json.JsonElement>();
+                Logger.LogInformation("Deserialized {Count} raw events from API", rawEvents.Count);
+                
+                var events = new List<TelemetryEventDto>();
+                foreach (var element in rawEvents)
+                {
+                    try
+                    {
+                        // Extract tag from the JSON element
+                        var eventTag = element.TryGetProperty("tag", out var tagProp) 
+                            ? tagProp.GetString() ?? "" 
+                            : "";
+                        
+                        // Filter by tag
+                        if (!eventTag.Equals(tag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+                        
+                        // Extract value from ValueJson (which is a JSON string or object)
+                        // API returns "value" as ValueJson which can be a JSON string
+                        var valueJson = element.TryGetProperty("value", out var valueProp) ? valueProp : default;
+                        var value = ExtractValueFromJson(valueJson);
+                        
+                        Logger.LogDebug("Parsed event: Tag={Tag}, Value={Value}, SourceId={SourceId}", 
+                            eventTag, value, element.TryGetProperty("sourceId", out var sid) ? sid.GetString() : "");
+                        
+                        // Parse EventId (can be Guid or string)
+                        Guid eventIdGuid = Guid.Empty;
+                        if (element.TryGetProperty("eventId", out var eventIdProp))
+                        {
+                            if (eventIdProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                            {
+                                Guid.TryParse(eventIdProp.GetString(), out eventIdGuid);
+                            }
+                        }
+                        
+                        // Parse FactoryId (can be enum int or string)
+                        string parsedFactoryId = factoryId;
+                        if (element.TryGetProperty("factoryId", out var factoryIdProp))
+                        {
+                            if (factoryIdProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                            {
+                                parsedFactoryId = factoryIdProp.GetString() ?? factoryId;
+                            }
+                            else if (factoryIdProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+                            {
+                                // Convert enum int to string
+                                var enumValue = factoryIdProp.GetInt32();
+                                if (Enum.IsDefined(typeof(FactoryEnum), enumValue))
+                                {
+                                    parsedFactoryId = ((FactoryEnum)enumValue).ToString();
+                                }
+                            }
+                        }
+                        
+                        // Convert to TelemetryEventDto
+                        var eventDto = new TelemetryEventDto
+                        {
+                            EventId = eventIdGuid,
+                            Timestamp = element.TryGetProperty("timestamp", out var tsProp) 
+                                ? tsProp.GetDateTimeOffset() 
+                                : DateTimeOffset.Now,
+                            FactoryId = parsedFactoryId,
+                            SourceId = element.TryGetProperty("sourceId", out var sourceIdProp) 
+                                ? (sourceIdProp.ValueKind == System.Text.Json.JsonValueKind.String 
+                                    ? sourceIdProp.GetString() ?? "" 
+                                    : sourceIdProp.GetRawText().Trim('"'))
+                                : "",
+                            EquipmentType = element.TryGetProperty("equipmentType", out var eqTypeProp) 
+                                ? (eqTypeProp.ValueKind == System.Text.Json.JsonValueKind.String 
+                                    ? eqTypeProp.GetString() ?? "" 
+                                    : eqTypeProp.GetRawText().Trim('"'))
+                                : "",
+                            EquipmentName = element.TryGetProperty("equipmentName", out var eqNameProp) 
+                                ? (eqNameProp.ValueKind == System.Text.Json.JsonValueKind.String 
+                                    ? eqNameProp.GetString() ?? "" 
+                                    : eqNameProp.GetRawText().Trim('"'))
+                                : "",
+                            Tag = eventTag,
+                            Value = value,
+                            Quality = element.TryGetProperty("quality", out var qualityProp) 
+                                ? (qualityProp.ValueKind == System.Text.Json.JsonValueKind.String 
+                                    ? qualityProp.GetString() ?? "Good"
+                                    : qualityProp.ValueKind == System.Text.Json.JsonValueKind.Number
+                                        ? ((qualityProp.GetInt32() == 0) ? "Good" : qualityProp.GetInt32().ToString())
+                                        : "Good")
+                                : "Good",
+                            Sequence = element.TryGetProperty("sequence", out var seqProp) 
+                                ? seqProp.GetInt64() 
+                                : 0
+                        };
+                        
+                        events.Add(eventDto);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning(ex, "Failed to parse event: {EventJson}", element.GetRawText());
+                    }
+                }
+                
+                Logger.LogInformation("Filtered to {Count} events matching tag {Tag}", events.Count, tag);
+                
+                // Sort by timestamp descending and take latest MaxDataPoints
+                var filteredEvents = events
+                    .OrderByDescending(e => e.Timestamp)
+                    .Take(MaxDataPoints)
+                    .OrderBy(e => e.Timestamp) // Sort ascending for display
+                    .ToList();
+                
+                Logger.LogInformation("Loaded {Count} initial data points (filtered from {Total} events)", filteredEvents.Count, events.Count);
+                
+                if (filteredEvents.Any())
+                {
+                    // Initialize data points
+                    _dataPoints = filteredEvents;
+                    
+                    // Initialize series data
+                    _seriesData.Clear();
+                    foreach (var evt in filteredEvents)
+                    {
+                        var key = evt.SourceId;
+                        if (!_seriesData.ContainsKey(key))
+                        {
+                            _seriesData[key] = new SeriesData
+                            {
+                                SourceId = key,
+                                EquipmentName = evt.EquipmentName,
+                                Color = GetColorForSeries(_seriesData.Count),
+                                DataPoints = new List<TelemetryEventDto>()
+                            };
+                        }
+                        _seriesData[key].DataPoints.Add(evt);
+                    }
+                    
+                    // Keep only last MaxDataPoints per series
+                    foreach (var series in _seriesData.Values)
+                    {
+                        if (series.DataPoints.Count > MaxDataPoints)
+                        {
+                            series.DataPoints = series.DataPoints
+                                .OrderByDescending(p => p.Timestamp)
+                                .Take(MaxDataPoints)
+                                .OrderBy(p => p.Timestamp)
+                                .ToList();
+                        }
+                    }
+                    
+                    // Update min/max values
+                    UpdateMinMax();
+                    
+                    _lastUpdateTime = DateTime.Now;
+                    Logger.LogInformation("Initialized chart with {Count} data points, {SeriesCount} series", _dataPoints.Count, _seriesData.Count);
+                    StateHasChanged();
+                }
+                else
+                {
+                    Logger.LogInformation("No initial data found for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
+                }
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Logger.LogWarning("Failed to load initial data: {StatusCode}, Response: {Response}", response.StatusCode, errorContent);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading initial data: {Message}", ex.Message);
+        }
+    }
+    
+    private double ExtractValueFromJson(System.Text.Json.JsonElement valueElement)
+    {
+        if (valueElement.ValueKind == System.Text.Json.JsonValueKind.Undefined || 
+            valueElement.ValueKind == System.Text.Json.JsonValueKind.Null)
+        {
+            return 0;
+        }
+        
+        if (valueElement.ValueKind == System.Text.Json.JsonValueKind.Number)
+        {
+            return valueElement.GetDouble();
+        }
+        else if (valueElement.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            var str = valueElement.GetString();
+            if (string.IsNullOrEmpty(str))
+            {
+                return 0;
+            }
+            
+            // Try parsing as number first
+            if (double.TryParse(str, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsedValue))
+            {
+                return parsedValue;
+            }
+            
+            // Try parsing as JSON string
+            try
+            {
+                var jsonDoc = System.Text.Json.JsonDocument.Parse(str);
+                return ExtractValueFromJson(jsonDoc.RootElement);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        else if (valueElement.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            // Try to get "value" property
+            if (valueElement.TryGetProperty("value", out var nestedValue))
+            {
+                return ExtractValueFromJson(nestedValue);
+            }
+            
+            // If no "value" property, try to get first numeric property
+            foreach (var prop in valueElement.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                {
+                    return prop.Value.GetDouble();
+                }
+            }
+        }
+        return 0;
     }
 
     private void OnTelemetryEventReceived(TelemetryEventDto eventDto)
@@ -241,8 +527,44 @@
         }
     }
 
+    private double GetXByIndex(TelemetryEventDto point)
+    {
+        if (_dataPoints.Count == 0) return 60;
+        
+        // Find the index of this point in _dataPoints
+        var index = _dataPoints.FindIndex(p => 
+            (p.EventId != Guid.Empty && p.EventId == point.EventId) || 
+            (p.Timestamp == point.Timestamp && p.SourceId == point.SourceId));
+        
+        if (index < 0)
+        {
+            // If not found, try to find by timestamp and sourceId
+            index = _dataPoints.FindIndex(p => p.Timestamp == point.Timestamp && p.SourceId == point.SourceId);
+        }
+        
+        if (index < 0)
+        {
+            // If still not found, try to find by timestamp only
+            index = _dataPoints.FindIndex(p => p.Timestamp == point.Timestamp);
+        }
+        
+        if (index < 0)
+        {
+            // If still not found, use the last position
+            index = _dataPoints.Count - 1;
+        }
+        
+        // Distribute points evenly across the width (60 to 780 = 720 pixels)
+        var totalPoints = Math.Min(_dataPoints.Count, MaxDataPoints);
+        if (totalPoints <= 1) return 60;
+        
+        var ratio = (double)index / (totalPoints - 1);
+        return 60 + ratio * 720; // 60 to 780
+    }
+    
     private double GetX(DateTimeOffset timestamp)
     {
+        // This method is kept for backward compatibility but should use GetXByIndex instead
         if (_dataPoints.Count == 0) return 60;
         
         var timeSpan = timestamp - _dataPoints[0].Timestamp;
@@ -270,7 +592,7 @@
         var path = new System.Text.StringBuilder();
         for (int i = 0; i < points.Count; i++)
         {
-            var x = GetX(points[i].Timestamp);
+            var x = GetXByIndex(points[i]);
             var y = GetY(points[i].Value);
             
             if (i == 0)

@@ -63,11 +63,11 @@ public class SignalRService : IAsyncDisposable
         try
         {
             await _hubConnection.StartAsync();
-            _logger.LogInformation("SignalR connection started");
+            _logger.LogInformation("SignalR connection started successfully. Hub URL: {HubUrl}", _hubUrl);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error starting SignalR connection");
+            _logger.LogError(ex, "Error starting SignalR connection to {HubUrl}", _hubUrl);
             throw;
         }
     }
@@ -171,7 +171,7 @@ public class SignalRService : IAsyncDisposable
                     
                     if (dto != null)
                     {
-                        _logger.LogDebug("Received telemetry event: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}", 
+                        _logger.LogInformation("SignalR Client: Received telemetry event: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}", 
                             dto.FactoryId, dto.Tag, dto.SourceId, dto.Value);
                         
                         // Call all registered callbacks

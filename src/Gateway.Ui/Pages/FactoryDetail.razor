@@ -1,6 +1,7 @@
 @page "/factory/{Id}"
 @inject TelemetryDataService DataService
 @inject NavigationManager Navigation
+@inject ILogger<FactoryDetail> Logger
 @using Gateway.Core.Models
 @using FactoryModel = Gateway.Ui.Models.Factory
 @using FactoryEnum = Gateway.Core.Models.Factory
@@ -40,7 +41,7 @@ else if (_factory != null)
         <!-- Sensors -->
         <div class="section-header">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h2 class="section-title">Sensor Readings</h2>
+            <h2 class="section-title">Sensor Readings</h2>
                 <div style="display: flex; gap: 1rem; align-items: center;">
                     <label style="display: flex; align-items: center; gap: 0.5rem;">
                         <span>Line:</span>
@@ -72,12 +73,19 @@ else if (_factory != null)
                     </div>
                 }
             }
-            else
+            else if (_factory != null && _factory.Sensors != null && _factory.Sensors.Any())
             {
                 @foreach (var sensor in _factory.Sensors)
                 {
                     <SensorCard Sensor="@sensor" OnSensorClick="OnSensorCardClick" />
                 }
+            }
+            else
+            {
+                <div style="grid-column: 1 / -1; padding: 2rem; text-align: center; color: var(--text-secondary);">
+                    <p>No sensor readings found for Line @_selectedLine.</p>
+                    <p style="font-size: 0.9rem; margin-top: 0.5rem;">Please check if data exists in the database or try a different line.</p>
+                </div>
             }
         </div>
 
@@ -170,28 +178,46 @@ else
 
     private async Task LoadFactoryData()
     {
-        _selectedLineNumber = null;
+        // Parse line number from selected line
         if (!string.IsNullOrEmpty(_selectedLine) && int.TryParse(_selectedLine, out var line))
         {
             _selectedLineNumber = line;
         }
+        else
+        {
+            // Default to Line 1 if parsing fails
+            _selectedLineNumber = 1;
+            _selectedLine = "1";
+        }
+
+        Logger.LogInformation("Loading factory data for FactoryId={FactoryId}, LineNumber={LineNumber}", Id, _selectedLineNumber);
 
         // Always group by line
         _factory = await DataService.GetFactoryAsync(Id, _selectedLineNumber, groupByLine: true);
         
         if (_factory != null)
         {
+            Logger.LogInformation("Factory data loaded: {SensorCount} sensors found", _factory.Sensors.Count);
+            
             // Group sensors by line
             if (_factory.Sensors.Any())
             {
                 _groupedSensors = _factory.Sensors
                     .GroupBy(s => ExtractLineName(s.Id) ?? "Unknown")
                     .ToDictionary(g => g.Key, g => g.ToList());
+                
+                Logger.LogInformation("Grouped sensors into {GroupCount} groups: {Groups}", 
+                    _groupedSensors.Count, string.Join(", ", _groupedSensors.Keys));
             }
             else
             {
+                Logger.LogWarning("No sensors found for factory {FactoryId}, line {LineNumber}", Id, _selectedLineNumber);
                 _groupedSensors = null;
             }
+        }
+        else
+        {
+            Logger.LogWarning("Factory data is null for FactoryId={FactoryId}, LineNumber={LineNumber}", Id, _selectedLineNumber);
         }
         
         _lastRefreshTime = DateTime.UtcNow;
