@@ -37,28 +37,75 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
             _hasRun = true;
         }
 
-        try
+        // Wait a bit to ensure database migrations are complete
+        await Task.Delay(2000, cancellationToken);
+
+        int maxRetries = 3;
+        int retryDelayMs = 5000;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            _logger.LogInformation("Starting ContinuousAggregatesSetupService...");
+            try
+            {
+                _logger.LogInformation("Starting ContinuousAggregatesSetupService (attempt {Attempt}/{MaxRetries})...", 
+                    attempt, maxRetries);
 
-            using var scope = _serviceProvider.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
-            var connection = dbContext.Database.GetDbConnection();
+                using var scope = _serviceProvider.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+                
+                // Ensure database connection is available
+                if (!await dbContext.Database.CanConnectAsync(cancellationToken))
+                {
+                    _logger.LogWarning("Database connection not available, retrying in {DelayMs}ms...", retryDelayMs);
+                    if (attempt < maxRetries)
+                    {
+                        await Task.Delay(retryDelayMs, cancellationToken);
+                        continue;
+                    }
+                    throw new InvalidOperationException("Database connection not available after multiple attempts");
+                }
 
-            await connection.OpenAsync(cancellationToken);
+                var connection = dbContext.Database.GetDbConnection();
+                
+                // Close connection if already open to avoid conflicts
+                if (connection.State == System.Data.ConnectionState.Open)
+                {
+                    _logger.LogInformation("Database connection already open, closing and reopening...");
+                    await connection.CloseAsync();
+                }
 
-            // 1. Ensure hypertable exists
-            await EnsureHypertableAsync(connection, cancellationToken);
+                await connection.OpenAsync(cancellationToken);
+                _logger.LogInformation("Database connection opened successfully");
 
-            // 2. Create continuous aggregates (views)
-            await CreateContinuousAggregatesAsync(connection, cancellationToken);
+                // 1. Ensure hypertable exists
+                await EnsureHypertableAsync(connection, cancellationToken);
 
-            _logger.LogInformation("ContinuousAggregatesSetupService completed successfully");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in ContinuousAggregatesSetupService");
-            // Don't throw - allow app to start even if setup fails
+                // 2. Create continuous aggregates (views)
+                await CreateContinuousAggregatesAsync(connection, cancellationToken);
+
+                // Close connection
+                await connection.CloseAsync();
+
+                _logger.LogInformation("ContinuousAggregatesSetupService completed successfully");
+                return; // Success, exit retry loop
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in ContinuousAggregatesSetupService (attempt {Attempt}/{MaxRetries}): {ErrorMessage}", 
+                    attempt, maxRetries, ex.Message);
+                
+                if (attempt < maxRetries)
+                {
+                    _logger.LogInformation("Retrying in {DelayMs}ms...", retryDelayMs);
+                    await Task.Delay(retryDelayMs, cancellationToken);
+                }
+                else
+                {
+                    _logger.LogError("ContinuousAggregatesSetupService failed after {MaxRetries} attempts. " +
+                        "Views may not be created. Please check database connection and permissions.", maxRetries);
+                    // Don't throw - allow app to start even if setup fails
+                }
+            }
         }
     }
 
@@ -71,38 +118,65 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
     {
         _logger.LogInformation("Checking if hypertable exists...");
 
-        var checkHypertableSql = @"
-            SELECT COUNT(*) 
-            FROM timescaledb_information.hypertables 
-            WHERE hypertable_name = 'telemetry_events'";
-
-        using var checkCommand = connection.CreateCommand();
-        checkCommand.CommandText = checkHypertableSql;
-        var exists = Convert.ToInt32(await checkCommand.ExecuteScalarAsync(cancellationToken)) > 0;
-
-        if (!exists)
+        try
         {
-            _logger.LogInformation("Creating hypertable for telemetry_events...");
+            // First check if telemetry_events table exists
+            var checkTableSql = @"
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'telemetry_events'
+                )";
 
-            // Check if table has data
-            var checkDataSql = "SELECT COUNT(*) FROM telemetry_events";
-            using var dataCommand = connection.CreateCommand();
-            dataCommand.CommandText = checkDataSql;
-            var hasData = Convert.ToInt32(await dataCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+            using var checkTableCommand = connection.CreateCommand();
+            checkTableCommand.CommandText = checkTableSql;
+            var tableExists = Convert.ToBoolean(await checkTableCommand.ExecuteScalarAsync(cancellationToken));
 
-            var createHypertableSql = hasData
-                ? "SELECT create_hypertable('telemetry_events', 'timestamp', migrate_data => TRUE)"
-                : "SELECT create_hypertable('telemetry_events', 'timestamp', if_not_exists => TRUE)";
+            if (!tableExists)
+            {
+                _logger.LogWarning("telemetry_events table does not exist yet. Hypertable creation will be skipped. " +
+                    "Please ensure database migrations are applied first.");
+                return;
+            }
 
-            using var createCommand = connection.CreateCommand();
-            createCommand.CommandText = createHypertableSql;
-            await createCommand.ExecuteNonQueryAsync(cancellationToken);
+            var checkHypertableSql = @"
+                SELECT COUNT(*) 
+                FROM timescaledb_information.hypertables 
+                WHERE hypertable_name = 'telemetry_events'";
 
-            _logger.LogInformation("Hypertable created successfully");
+            using var checkCommand = connection.CreateCommand();
+            checkCommand.CommandText = checkHypertableSql;
+            var exists = Convert.ToInt32(await checkCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+            if (!exists)
+            {
+                _logger.LogInformation("Creating hypertable for telemetry_events...");
+
+                // Check if table has data
+                var checkDataSql = "SELECT COUNT(*) FROM telemetry_events";
+                using var dataCommand = connection.CreateCommand();
+                dataCommand.CommandText = checkDataSql;
+                var hasData = Convert.ToInt32(await dataCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+                var createHypertableSql = hasData
+                    ? "SELECT create_hypertable('telemetry_events', 'timestamp', migrate_data => TRUE)"
+                    : "SELECT create_hypertable('telemetry_events', 'timestamp', if_not_exists => TRUE)";
+
+                using var createCommand = connection.CreateCommand();
+                createCommand.CommandText = createHypertableSql;
+                await createCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                _logger.LogInformation("Hypertable created successfully");
+            }
+            else
+            {
+                _logger.LogInformation("Hypertable already exists");
+            }
         }
-        else
+        catch (Exception ex)
         {
-            _logger.LogInformation("Hypertable already exists");
+            _logger.LogError(ex, "Error ensuring hypertable exists: {ErrorMessage}", ex.Message);
+            throw; // Re-throw to trigger retry logic
         }
     }
 
@@ -110,15 +184,17 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
     {
         _logger.LogInformation("Creating continuous aggregates...");
 
-        // Check if 10-minute aggregate exists
-        var check10MinSql = @"
-            SELECT COUNT(*) 
-            FROM timescaledb_information.continuous_aggregates 
-            WHERE view_name = 'sensor_readings_10min'";
+        try
+        {
+            // Check if 10-minute aggregate exists
+            var check10MinSql = @"
+                SELECT COUNT(*) 
+                FROM timescaledb_information.continuous_aggregates 
+                WHERE view_name = 'sensor_readings_10min'";
 
-        using var check10MinCommand = connection.CreateCommand();
-        check10MinCommand.CommandText = check10MinSql;
-        var exists10Min = Convert.ToInt32(await check10MinCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+            using var check10MinCommand = connection.CreateCommand();
+            check10MinCommand.CommandText = check10MinSql;
+            var exists10Min = Convert.ToInt32(await check10MinCommand.ExecuteScalarAsync(cancellationToken)) > 0;
 
         if (!exists10Min)
         {
@@ -241,6 +317,13 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
         else
         {
             _logger.LogInformation("sensor_trends_1hour continuous aggregate already exists");
+        }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating continuous aggregates: {ErrorMessage}", ex.Message);
+            _logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
+            throw; // Re-throw to trigger retry logic
         }
     }
 }
