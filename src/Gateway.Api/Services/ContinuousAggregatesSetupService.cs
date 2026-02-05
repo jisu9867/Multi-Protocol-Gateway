@@ -248,6 +248,29 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
             await index10MinCommand.ExecuteNonQueryAsync(cancellationToken);
 
             _logger.LogInformation("sensor_readings_10min continuous aggregate created");
+            
+            // Refresh with existing data if any
+            var checkDataSql = "SELECT COUNT(*) FROM telemetry_events WHERE quality = 0";
+            using var dataCommand = connection.CreateCommand();
+            dataCommand.CommandText = checkDataSql;
+            var hasData = Convert.ToInt32(await dataCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+            
+            if (hasData)
+            {
+                _logger.LogInformation("Refreshing sensor_readings_10min with existing data...");
+                try
+                {
+                    var refreshSql = "CALL refresh_continuous_aggregate('sensor_readings_10min', NULL, NULL)";
+                    using var refreshCommand = connection.CreateCommand();
+                    refreshCommand.CommandText = refreshSql;
+                    await refreshCommand.ExecuteNonQueryAsync(cancellationToken);
+                    _logger.LogInformation("sensor_readings_10min refreshed with existing data");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error refreshing sensor_readings_10min with existing data. This is normal if the view was just created.");
+                }
+            }
         }
         else
         {
@@ -313,6 +336,29 @@ public sealed class ContinuousAggregatesSetupService : IHostedService
             await index1HourCommand.ExecuteNonQueryAsync(cancellationToken);
 
             _logger.LogInformation("sensor_trends_1hour continuous aggregate created");
+            
+            // Refresh with existing data if any
+            var checkDataSql1Hour = "SELECT COUNT(*) FROM telemetry_events WHERE quality = 0";
+            using var dataCommand1Hour = connection.CreateCommand();
+            dataCommand1Hour.CommandText = checkDataSql1Hour;
+            var hasData1Hour = Convert.ToInt32(await dataCommand1Hour.ExecuteScalarAsync(cancellationToken)) > 0;
+            
+            if (hasData1Hour)
+            {
+                _logger.LogInformation("Refreshing sensor_trends_1hour with existing data...");
+                try
+                {
+                    var refreshSql1Hour = "CALL refresh_continuous_aggregate('sensor_trends_1hour', NULL, NULL)";
+                    using var refreshCommand1Hour = connection.CreateCommand();
+                    refreshCommand1Hour.CommandText = refreshSql1Hour;
+                    await refreshCommand1Hour.ExecuteNonQueryAsync(cancellationToken);
+                    _logger.LogInformation("sensor_trends_1hour refreshed with existing data");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error refreshing sensor_trends_1hour with existing data. This is normal if the view was just created.");
+                }
+            }
         }
         else
         {
