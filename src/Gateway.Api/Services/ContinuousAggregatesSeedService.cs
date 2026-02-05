@@ -18,30 +18,38 @@ public sealed class ContinuousAggregatesSeedService : IHostedService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ContinuousAggregatesSeedService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _environment;
     private static bool _hasRun = false;
     private static readonly object _lock = new();
 
     public ContinuousAggregatesSeedService(
         IServiceProvider serviceProvider,
         ILogger<ContinuousAggregatesSeedService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
         _configuration = configuration;
+        _environment = environment;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Check if seed data is enabled via environment variable or configuration
-        var enableSeedData = _configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
+        // Check if seed data is enabled via environment variable, configuration, or Development environment
+        var enableSeedData = _environment.IsDevelopment() || // Default to true in Development for backward compatibility
+                            _configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
                             _configuration.GetValue<bool>("ENABLE_SEED_DATA", false);
         
         if (!enableSeedData)
         {
-            _logger.LogInformation("ContinuousAggregatesSeedService skipped (ENABLE_SEED_DATA is not enabled)");
+            _logger.LogInformation("ContinuousAggregatesSeedService skipped (seed data not enabled). Environment: {Environment}", 
+                _environment.EnvironmentName);
             return;
         }
+        
+        _logger.LogInformation("ContinuousAggregatesSeedService enabled. Environment: {Environment}", 
+            _environment.EnvironmentName);
 
         // Ensure this only runs once
         lock (_lock)
