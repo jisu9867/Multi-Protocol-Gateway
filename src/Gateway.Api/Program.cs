@@ -276,15 +276,101 @@ using (var scope = app.Services.CreateScope())
     
     try
     {
+        logger.LogInformation("Checking database connection and applying migrations...");
+        
+        // Check if database can be connected
+        var canConnect = await dbContext.Database.CanConnectAsync();
+        if (!canConnect)
+        {
+            logger.LogError("Cannot connect to database. Please check connection string.");
+            throw new InvalidOperationException("Cannot connect to database.");
+        }
+        
+        // Check if telemetry_events table exists
+        var connection = dbContext.Database.GetDbConnection();
+        await connection.OpenAsync();
+        
+        var tableExists = false;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'telemetry_events'
+                );";
+            var result = await command.ExecuteScalarAsync();
+            tableExists = result != null && Convert.ToBoolean(result);
+        }
+        
+        if (!tableExists)
+        {
+            logger.LogWarning("telemetry_events table does not exist. Checking migration history...");
+            
+            // Check if migration history exists but table doesn't (inconsistent state)
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = @"
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = '__EFMigrationsHistory'
+                    );";
+                var historyExists = await command.ExecuteScalarAsync();
+                if (historyExists != null && Convert.ToBoolean(historyExists))
+                {
+                    logger.LogWarning("Migration history exists but telemetry_events table is missing. This may indicate the table was dropped manually.");
+                    logger.LogInformation("Will attempt to apply migrations. If this fails, you may need to manually clean up __EFMigrationsHistory table.");
+                }
+            }
+        }
+        else
+        {
+            logger.LogInformation("telemetry_events table exists.");
+        }
+        
+        await connection.CloseAsync();
+        
+        // Apply migrations
         logger.LogInformation("Applying database migrations...");
         await dbContext.Database.MigrateAsync();
         logger.LogInformation("Database migrations applied successfully.");
+        
+        // Verify table was created
+        await connection.OpenAsync();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'telemetry_events'
+                );";
+            var result = await command.ExecuteScalarAsync();
+            var tableNowExists = result != null && Convert.ToBoolean(result);
+            
+            if (tableNowExists)
+            {
+                logger.LogInformation("telemetry_events table verified after migration.");
+            }
+            else
+            {
+                logger.LogError("telemetry_events table still does not exist after migration. This is a critical error.");
+                throw new InvalidOperationException("telemetry_events table was not created after migration.");
+            }
+        }
+        await connection.CloseAsync();
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "An error occurred while applying database migrations.");
+        logger.LogError(ex, "An error occurred while applying database migrations. Application will continue but database operations may fail.");
         // Don't throw - allow app to start even if migration fails
         // Migration errors will be visible in health checks
+        // However, log critical errors clearly
+        if (ex is InvalidOperationException)
+        {
+            logger.LogCritical("CRITICAL: Database migration failed. The application may not function correctly.");
+        }
     }
 }
 
