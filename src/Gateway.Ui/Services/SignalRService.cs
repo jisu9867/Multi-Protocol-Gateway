@@ -30,44 +30,57 @@ public class SignalRService : IAsyncDisposable
     {
         if (_hubConnection != null && IsConnected)
         {
+            _logger.LogDebug("SignalR connection already established");
             return;
         }
+
+        _logger.LogInformation("Initializing SignalR connection to {HubUrl}", _hubUrl);
 
         _hubConnection = new HubConnectionBuilder()
             .WithUrl(_hubUrl)
             .WithAutomaticReconnect()
             .ConfigureLogging(logging =>
             {
-                logging.SetMinimumLevel(LogLevel.Warning);
+                logging.SetMinimumLevel(LogLevel.Information);
             })
             .Build();
 
         _hubConnection.Reconnecting += error =>
         {
-            _logger.LogWarning("SignalR connection lost. Reconnecting...");
+            _logger.LogWarning("SignalR connection lost. Reconnecting... Error: {Error}", error?.Message ?? "Unknown");
             return Task.CompletedTask;
         };
 
         _hubConnection.Reconnected += connectionId =>
         {
-            _logger.LogInformation("SignalR reconnected. Connection ID: {ConnectionId}", connectionId);
+            _logger.LogInformation("SignalR reconnected successfully. Connection ID: {ConnectionId}", connectionId);
             return Task.CompletedTask;
         };
 
         _hubConnection.Closed += error =>
         {
-            _logger.LogError(error, "SignalR connection closed");
+            if (error != null)
+            {
+                _logger.LogError(error, "SignalR connection closed with error");
+            }
+            else
+            {
+                _logger.LogWarning("SignalR connection closed");
+            }
             return Task.CompletedTask;
         };
 
         try
         {
+            _logger.LogInformation("Attempting to start SignalR connection...");
             await _hubConnection.StartAsync();
-            _logger.LogInformation("SignalR connection started successfully. Hub URL: {HubUrl}", _hubUrl);
+            _logger.LogInformation("SignalR connection started successfully. Hub URL: {HubUrl}, State: {State}", 
+                _hubUrl, _hubConnection.State);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error starting SignalR connection to {HubUrl}", _hubUrl);
+            _logger.LogError(ex, "Failed to start SignalR connection to {HubUrl}. Error: {ErrorMessage}", 
+                _hubUrl, ex.Message);
             throw;
         }
     }

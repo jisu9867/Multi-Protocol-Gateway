@@ -37,7 +37,27 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("http://localhost:5270", "https://localhost:7003")
+        var allowedOrigins = new List<string>
+        {
+            "http://localhost:5270",
+            "https://localhost:7003"
+        };
+        
+        // Add Azure UI URL if configured
+        var azureUiUrl = builder.Configuration["Cors:AzureUiUrl"];
+        if (!string.IsNullOrWhiteSpace(azureUiUrl))
+        {
+            allowedOrigins.Add(azureUiUrl);
+        }
+        
+        // Also check environment variable for Azure UI URL
+        var azureUiUrlFromEnv = Environment.GetEnvironmentVariable("CORS__AZURE_UI_URL");
+        if (!string.IsNullOrWhiteSpace(azureUiUrlFromEnv))
+        {
+            allowedOrigins.Add(azureUiUrlFromEnv);
+        }
+        
+        policy.WithOrigins(allowedOrigins.ToArray())
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials();

@@ -195,6 +195,14 @@ jobs:
         else
           echo "ENABLE_SEED_DATA secret not set. Seed data will be disabled (default)."
         fi
+        
+        # Set CORS Azure UI URL for API
+        echo "Setting CORS Azure UI URL..."
+        az webapp config appsettings set \
+          --name ${{ env.AZURE_WEBAPP_NAME }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --settings Cors__AzureUiUrl="https://${{ env.AZURE_WEBAPP_NAME_UI }}.azurewebsites.net"
+        echo "CORS Azure UI URL configured"
 
     - name: Deploy to Azure Web App
       id: deploy-to-webapp
@@ -222,12 +230,14 @@ jobs:
 
     - name: Set Azure App Service environment variables for UI
       run: |
+        echo "Setting UI environment variables..."
         az webapp config appsettings set \
           --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
           --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
           --settings \
             ASPNETCORE_ENVIRONMENT=Production \
             GatewayApi__BaseUrl="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "UI environment variables configured"
 
     - name: Deploy to Azure Web App
       id: deploy-to-webapp-ui
@@ -235,3 +245,11 @@ jobs:
       with:
         app-name: ${{ env.AZURE_WEBAPP_NAME_UI }}
         package: ./publish/ui
+
+    - name: Restart UI App Service
+      run: |
+        echo "Restarting UI App Service to apply environment variables..."
+        az webapp restart \
+          --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        echo "UI App Service restarted"
