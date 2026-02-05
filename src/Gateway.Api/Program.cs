@@ -203,8 +203,13 @@ if (adapterOptions.Mqtt.Enabled)
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();
 
-// Continuous aggregates seed service (Development only)
-if (builder.Environment.IsDevelopment())
+// Continuous aggregates seed service (controlled by ENABLE_SEED_DATA environment variable)
+// Check if seed data is enabled via environment variable or configuration
+var enableSeedData = builder.Configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
+                     builder.Configuration.GetValue<bool>("ENABLE_SEED_DATA", false) ||
+                     builder.Environment.IsDevelopment(); // Default to true in Development for backward compatibility
+
+if (enableSeedData)
 {
     builder.Services.AddHostedService<ContinuousAggregatesSeedService>();
 }

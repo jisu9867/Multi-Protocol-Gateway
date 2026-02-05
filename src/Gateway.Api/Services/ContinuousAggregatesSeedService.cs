@@ -1,6 +1,7 @@
 using Gateway.Core.Models;
 using Gateway.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -8,32 +9,36 @@ using System.Text.Json;
 namespace Gateway.Api.Services;
 
 /// <summary>
-/// Seed service for creating TimescaleDB continuous aggregates on startup (Development only)
+/// Seed service for creating TimescaleDB continuous aggregates on startup
+/// Controlled by ENABLE_SEED_DATA environment variable or Gateway:EnableSeedData configuration
 /// </summary>
 public sealed class ContinuousAggregatesSeedService : IHostedService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ContinuousAggregatesSeedService> _logger;
-    private readonly IHostEnvironment _environment;
+    private readonly IConfiguration _configuration;
     private static bool _hasRun = false;
     private static readonly object _lock = new();
 
     public ContinuousAggregatesSeedService(
         IServiceProvider serviceProvider,
         ILogger<ContinuousAggregatesSeedService> logger,
-        IHostEnvironment environment)
+        IConfiguration configuration)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
-        _environment = environment;
+        _configuration = configuration;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Only run in Development environment
-        if (!_environment.IsDevelopment())
+        // Check if seed data is enabled via environment variable or configuration
+        var enableSeedData = _configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
+                            _configuration.GetValue<bool>("ENABLE_SEED_DATA", false);
+        
+        if (!enableSeedData)
         {
-            _logger.LogInformation("ContinuousAggregatesSeedService skipped (not in Development environment)");
+            _logger.LogInformation("ContinuousAggregatesSeedService skipped (ENABLE_SEED_DATA is not enabled)");
             return;
         }
 

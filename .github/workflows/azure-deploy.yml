@@ -174,10 +174,26 @@ jobs:
         
         # Set Event Hubs connection string (if provided)
         if [ -n "${{ secrets.KAFKA_EVENTHUBS_CONNECTION_STRING }}" ]; then
+          echo "Setting Event Hubs connection string..."
           az webapp config appsettings set \
             --name ${{ env.AZURE_WEBAPP_NAME }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --settings Kafka__EventHubsConnectionString="${{ secrets.KAFKA_EVENTHUBS_CONNECTION_STRING }}"
+          echo "Event Hubs connection string configured successfully"
+        else
+          echo "Warning: KAFKA_EVENTHUBS_CONNECTION_STRING secret not set. Using local Kafka or default configuration."
+        fi
+        
+        # Set seed data enable flag (if provided, default is false)
+        if [ -n "${{ secrets.ENABLE_SEED_DATA }}" ]; then
+          echo "Setting ENABLE_SEED_DATA to ${{ secrets.ENABLE_SEED_DATA }}..."
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings ENABLE_SEED_DATA="${{ secrets.ENABLE_SEED_DATA }}"
+          echo "Seed data configuration updated"
+        else
+          echo "ENABLE_SEED_DATA secret not set. Seed data will be disabled (default)."
         fi
 
     - name: Deploy to Azure Web App

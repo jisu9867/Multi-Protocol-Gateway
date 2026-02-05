@@ -88,6 +88,15 @@
      
      ⚠️ **선택 사항**: Event Hubs를 사용하지 않는 경우 Secret을 추가하지 않아도 됩니다. 설정하지 않으면 로컬 Kafka를 사용합니다.
 
+   - **`ENABLE_SEED_DATA`**: 초기 시드 데이터 생성 활성화 여부 (선택 사항)
+     
+     값: `true` 또는 `false` (기본값: `false`)
+     
+     ⚠️ **선택 사항**: 
+     - `true`로 설정하면 애플리케이션 시작 시 샘플 텔레메트리 데이터와 TimescaleDB continuous aggregates가 자동으로 생성됩니다.
+     - 초기 배포 시 또는 테스트 목적으로만 사용하는 것을 권장합니다.
+     - 설정하지 않으면 시드 데이터가 생성되지 않습니다.
+
    **참고**: 
    - Secrets는 GitHub 레포지토리 Settings > Secrets and variables > Actions > New repository secret에서 추가
    - 모든 Secrets는 환경 변수로 전달되므로 값이 로그에 노출되지 않도록 주의
@@ -351,6 +360,7 @@ docker pull ghcr.io/<username>/Multi-Protocol-Gateway/gateway-ui:main
   - `Adapters__Mqtt__Username`: GitHub Secret의 `AZURE_MQTT_USERNAME` 값 (선택 사항, 기본값: 빈 문자열)
   - `Adapters__Mqtt__Password`: GitHub Secret의 `AZURE_MQTT_PASSWORD` 값 (선택 사항, 기본값: 빈 문자열)
   - `Kafka__EventHubsConnectionString`: GitHub Secret의 `KAFKA_EVENTHUBS_CONNECTION_STRING` 값 (선택 사항, 설정하지 않으면 로컬 Kafka 사용)
+  - `ENABLE_SEED_DATA`: GitHub Secret의 `ENABLE_SEED_DATA` 값 (선택 사항, 기본값: `false`, `true`로 설정 시 초기 시드 데이터 생성)
 
 - UI App Service:
   - `ASPNETCORE_ENVIRONMENT`: Production
@@ -370,6 +380,7 @@ Azure Portal > App Service > Configuration > Application settings에서 직접 �
 - `Adapters__Mqtt__Username`: MQTT 사용자명 (워크플로우에서 자동 설정, 선택 사항)
 - `Adapters__Mqtt__Password`: MQTT 비밀번호 (워크플로우에서 자동 설정, 선택 사항)
 - `Kafka__EventHubsConnectionString`: Event Hubs 연결 문자열 (워크플로우에서 자동 설정, 선택 사항)
+- `ENABLE_SEED_DATA`: 초기 시드 데이터 생성 활성화 (워크플로우에서 자동 설정, 선택 사항, 기본값: `false`)
 
 #### UI App Service
 - `ASPNETCORE_ENVIRONMENT`: Production (워크플로우에서 자동 설정)
