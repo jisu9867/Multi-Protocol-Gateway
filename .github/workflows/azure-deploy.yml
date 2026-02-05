@@ -211,6 +211,18 @@ jobs:
         app-name: ${{ env.AZURE_WEBAPP_NAME }}
         package: ./publish/api
 
+    - name: Restart API App Service
+      run: |
+        echo "Restarting API App Service to apply CORS settings..."
+        az webapp restart \
+          --name ${{ env.AZURE_WEBAPP_NAME }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        
+        echo "Waiting for API App Service to restart..."
+        sleep 10
+        
+        echo "API App Service restarted"
+
   deploy-ui:
     needs: build
     runs-on: ubuntu-latest

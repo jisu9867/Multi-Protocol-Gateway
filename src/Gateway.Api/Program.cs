@@ -50,12 +50,24 @@ builder.Services.AddCors(options =>
             allowedOrigins.Add(azureUiUrl);
         }
         
-        // Also check environment variable for Azure UI URL
+        // Also check environment variable for Azure UI URL (both formats)
         var azureUiUrlFromEnv = Environment.GetEnvironmentVariable("CORS__AZURE_UI_URL");
         if (!string.IsNullOrWhiteSpace(azureUiUrlFromEnv))
         {
             allowedOrigins.Add(azureUiUrlFromEnv);
         }
+        
+        // Also check Cors__AzureUiUrl format (double underscore)
+        var azureUiUrlFromEnv2 = Environment.GetEnvironmentVariable("Cors__AzureUiUrl");
+        if (!string.IsNullOrWhiteSpace(azureUiUrlFromEnv2))
+        {
+            allowedOrigins.Add(azureUiUrlFromEnv2);
+        }
+        
+        // Log allowed origins for debugging
+        var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+        var corsLogger = loggerFactory.CreateLogger("CORS");
+        corsLogger.LogInformation("CORS Allowed Origins: {Origins}", string.Join(", ", allowedOrigins));
         
         policy.WithOrigins(allowedOrigins.ToArray())
               .AllowAnyMethod()
@@ -223,7 +235,12 @@ if (adapterOptions.Mqtt.Enabled)
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();
 
+// Continuous aggregates setup service (always runs to ensure views are created)
+// This service creates hypertable and continuous aggregates (views) regardless of seed data settings
+builder.Services.AddHostedService<ContinuousAggregatesSetupService>();
+
 // Continuous aggregates seed service (controlled by ENABLE_SEED_DATA environment variable)
+// This service only populates sample data, views are created by ContinuousAggregatesSetupService
 // Check if seed data is enabled via environment variable or configuration
 var enableSeedData = builder.Configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
                      builder.Configuration.GetValue<bool>("ENABLE_SEED_DATA", false) ||

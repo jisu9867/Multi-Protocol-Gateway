@@ -81,13 +81,17 @@ public class TelemetryDataService
             var queryString = string.Join("&", queryParams);
             
             // Get sensor readings - ensure path starts with /
-            var readingsResponse = await _httpClient.GetAsync(
-                $"/api/events/sensor-readings?{queryString}", 
-                cancellationToken);
+            var apiUrl = $"/api/events/sensor-readings?{queryString}";
+            var fullUrl = $"{_httpClient.BaseAddress}{apiUrl}";
+            _logger.LogInformation("Calling API: {FullUrl}", fullUrl);
+            
+            var readingsResponse = await _httpClient.GetAsync(apiUrl, cancellationToken);
 
             if (!readingsResponse.IsSuccessStatusCode)
             {
-                _logger.LogError("Failed to get sensor readings: {StatusCode}", readingsResponse.StatusCode);
+                var errorContent = await readingsResponse.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Failed to get sensor readings: StatusCode={StatusCode}, Response={ErrorContent}, URL={FullUrl}", 
+                    readingsResponse.StatusCode, errorContent, fullUrl);
                 return null;
             }
 
@@ -154,14 +158,17 @@ public class TelemetryDataService
             }
             
             var queryString = string.Join("&", queryParams);
+            var apiUrl = $"/api/events/sensor-trends?{queryString}";
+            var fullUrl = $"{_httpClient.BaseAddress}{apiUrl}";
+            _logger.LogInformation("Calling API: {FullUrl}", fullUrl);
 
-            var response = await _httpClient.GetAsync(
-                $"/api/events/sensor-trends?{queryString}",
-                cancellationToken);
+            var response = await _httpClient.GetAsync(apiUrl, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Failed to get sensor trends: {StatusCode}", response.StatusCode);
+                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError("Failed to get sensor trends: StatusCode={StatusCode}, Response={ErrorContent}, URL={FullUrl}", 
+                    response.StatusCode, errorContent, fullUrl);
                 return new List<ChartDataPoint>();
             }
 
