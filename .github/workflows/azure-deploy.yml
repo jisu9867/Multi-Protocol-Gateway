@@ -231,13 +231,25 @@ jobs:
     - name: Set Azure App Service environment variables for UI
       run: |
         echo "Setting UI environment variables..."
+        echo "API URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "UI App Name: ${{ env.AZURE_WEBAPP_NAME_UI }}"
+        
         az webapp config appsettings set \
           --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
           --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
           --settings \
             ASPNETCORE_ENVIRONMENT=Production \
             GatewayApi__BaseUrl="https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        
         echo "UI environment variables configured"
+        
+        # Verify settings were applied
+        echo "Verifying environment variables..."
+        az webapp config appsettings list \
+          --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --query "[?name=='GatewayApi__BaseUrl' || name=='ASPNETCORE_ENVIRONMENT'].{Name:name, Value:value}" \
+          -o table
 
     - name: Deploy to Azure Web App
       id: deploy-to-webapp-ui
@@ -252,4 +264,15 @@ jobs:
         az webapp restart \
           --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
           --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
-        echo "UI App Service restarted"
+        
+        echo "Waiting for App Service to restart..."
+        sleep 10
+        
+        echo "Checking App Service status..."
+        az webapp show \
+          --name ${{ env.AZURE_WEBAPP_NAME_UI }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+          --query "{State:state, DefaultHostName:defaultHostName}" \
+          -o table
+        
+        echo "UI App Service restarted and verified"
