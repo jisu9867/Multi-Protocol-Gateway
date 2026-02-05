@@ -9,9 +9,9 @@ using System.Text.Json;
 namespace Gateway.Api.Services;
 
 /// <summary>
-/// Seed service for populating sample telemetry data
+/// Seed service for populating sample telemetry data and creating continuous aggregates (views)
 /// Controlled by ENABLE_SEED_DATA environment variable or Gateway:EnableSeedData configuration
-/// Note: Continuous aggregates (views) are created by ContinuousAggregatesSetupService, not here
+/// When enabled: seeds data, creates hypertable, creates views, and refreshes views
 /// </summary>
 public sealed class ContinuousAggregatesSeedService : IHostedService
 {
@@ -36,9 +36,9 @@ public sealed class ContinuousAggregatesSeedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Check if seed data is enabled via environment variable, configuration, or Development environment
-        var enableSeedData = _environment.IsDevelopment() || // Default to true in Development for backward compatibility
-                            _configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
+        // Check if seed data is enabled via environment variable or configuration
+        // Note: IsDevelopment() is NOT included here - only explicit configuration
+        var enableSeedData = _configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
                             _configuration.GetValue<bool>("ENABLE_SEED_DATA", false);
         
         if (!enableSeedData)
@@ -75,14 +75,21 @@ public sealed class ContinuousAggregatesSeedService : IHostedService
             // 1. Seed sample data if table is empty
             await SeedSampleDataAsync(dbContext, cancellationToken);
 
-            // 2. Refresh continuous aggregates with seeded data
+            // 2. Ensure hypertable exists
+            await EnsureHypertableAsync(connection, cancellationToken);
+
+            // 3. Create continuous aggregates (views)
+            await CreateContinuousAggregatesAsync(connection, cancellationToken);
+
+            // 4. Refresh continuous aggregates with seeded data
             await RefreshContinuousAggregatesAsync(connection, cancellationToken);
 
-            _logger.LogInformation("ContinuousAggregatesSeedService completed successfully");
+            _logger.LogInformation("ContinuousAggregatesSeedService completed successfully: Data seeded ✓, Hypertable ✓, Views ✓, Refreshed ✓");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in ContinuousAggregatesSeedService");
+            _logger.LogError(ex, "Error in ContinuousAggregatesSeedService: {ErrorMessage}", ex.Message);
+            _logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
             // Don't throw - allow app to start even if seed fails
         }
     }
@@ -197,6 +204,200 @@ public sealed class ContinuousAggregatesSeedService : IHostedService
         _logger.LogInformation("Seeded {Count} sample telemetry events", events.Count);
     }
 
+    private async Task EnsureHypertableAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Checking if hypertable exists...");
+
+        try
+        {
+            var checkHypertableSql = @"
+                SELECT COUNT(*) 
+                FROM timescaledb_information.hypertables 
+                WHERE hypertable_name = 'telemetry_events'";
+
+            using var checkHypertableCommand = connection.CreateCommand();
+            checkHypertableCommand.CommandText = checkHypertableSql;
+            var hypertableExists = Convert.ToInt32(await checkHypertableCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+            if (!hypertableExists)
+            {
+                _logger.LogInformation("Creating hypertable for telemetry_events...");
+
+                // Check if table has data
+                var checkDataSql = "SELECT COUNT(*) FROM telemetry_events";
+                using var dataCommand = connection.CreateCommand();
+                dataCommand.CommandText = checkDataSql;
+                var hasData = Convert.ToInt32(await dataCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+                var createHypertableSql = hasData
+                    ? "SELECT create_hypertable('telemetry_events', 'timestamp', migrate_data => TRUE)"
+                    : "SELECT create_hypertable('telemetry_events', 'timestamp', if_not_exists => TRUE)";
+
+                using var createHypertableCommand = connection.CreateCommand();
+                createHypertableCommand.CommandText = createHypertableSql;
+                await createHypertableCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                _logger.LogInformation("Hypertable created successfully");
+            }
+            else
+            {
+                _logger.LogInformation("Hypertable already exists");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error ensuring hypertable: {ErrorMessage}", ex.Message);
+            throw;
+        }
+    }
+
+    private async Task CreateContinuousAggregatesAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Creating continuous aggregates (views)...");
+
+        try
+        {
+            // Check if 10-minute aggregate exists
+            var check10MinSql = @"
+                SELECT COUNT(*) 
+                FROM timescaledb_information.continuous_aggregates 
+                WHERE view_name = 'sensor_readings_10min'";
+
+            using var check10MinCommand = connection.CreateCommand();
+            check10MinCommand.CommandText = check10MinSql;
+            var exists10Min = Convert.ToInt32(await check10MinCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+            if (!exists10Min)
+            {
+                _logger.LogInformation("Creating sensor_readings_10min continuous aggregate...");
+
+                var create10MinSql = @"
+                    CREATE MATERIALIZED VIEW sensor_readings_10min
+                    WITH (timescaledb.continuous) AS
+                    SELECT 
+                        time_bucket('10 minutes', timestamp) AS bucket,
+                        factory_id,
+                        tag,
+                        equipment_type,
+                        equipment_name,
+                        source_id,
+                        AVG((value_json::jsonb->>'value')::numeric) AS avg_value,
+                        MIN((value_json::jsonb->>'value')::numeric) AS min_value,
+                        MAX((value_json::jsonb->>'value')::numeric) AS max_value,
+                        COUNT(*) AS count,
+                        MAX(timestamp) AS last_timestamp
+                    FROM telemetry_events
+                    WHERE quality = 0
+                    GROUP BY bucket, factory_id, tag, equipment_type, equipment_name, source_id
+                    WITH NO DATA";
+
+                using var create10MinCommand = connection.CreateCommand();
+                create10MinCommand.CommandText = create10MinSql;
+                await create10MinCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                // Add refresh policy
+                var policy10MinSql = @"
+                    SELECT add_continuous_aggregate_policy('sensor_readings_10min',
+                        start_offset => INTERVAL '3 hours',
+                        end_offset => INTERVAL '10 minutes',
+                        schedule_interval => INTERVAL '5 minutes',
+                        if_not_exists => TRUE)";
+
+                using var policy10MinCommand = connection.CreateCommand();
+                policy10MinCommand.CommandText = policy10MinSql;
+                await policy10MinCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                // Create indexes
+                var index10MinSql = @"
+                    CREATE INDEX IF NOT EXISTS idx_sensor_readings_10min_factory_tag 
+                        ON sensor_readings_10min (factory_id, tag, bucket DESC);
+                    CREATE INDEX IF NOT EXISTS idx_sensor_readings_10min_last_timestamp 
+                        ON sensor_readings_10min (last_timestamp DESC)";
+
+                using var index10MinCommand = connection.CreateCommand();
+                index10MinCommand.CommandText = index10MinSql;
+                await index10MinCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                _logger.LogInformation("sensor_readings_10min continuous aggregate created successfully");
+            }
+            else
+            {
+                _logger.LogInformation("sensor_readings_10min continuous aggregate already exists");
+            }
+
+            // Check if 1-hour aggregate exists
+            var check1HourSql = @"
+                SELECT COUNT(*) 
+                FROM timescaledb_information.continuous_aggregates 
+                WHERE view_name = 'sensor_trends_1hour'";
+
+            using var check1HourCommand = connection.CreateCommand();
+            check1HourCommand.CommandText = check1HourSql;
+            var exists1Hour = Convert.ToInt32(await check1HourCommand.ExecuteScalarAsync(cancellationToken)) > 0;
+
+            if (!exists1Hour)
+            {
+                _logger.LogInformation("Creating sensor_trends_1hour continuous aggregate...");
+
+                var create1HourSql = @"
+                    CREATE MATERIALIZED VIEW sensor_trends_1hour
+                    WITH (timescaledb.continuous) AS
+                    SELECT 
+                        time_bucket('1 hour', timestamp) AS bucket,
+                        factory_id,
+                        tag,
+                        equipment_type,
+                        equipment_name,
+                        source_id,
+                        AVG((value_json::jsonb->>'value')::numeric) AS avg_value,
+                        MIN((value_json::jsonb->>'value')::numeric) AS min_value,
+                        MAX((value_json::jsonb->>'value')::numeric) AS max_value,
+                        COUNT(*) AS count
+                    FROM telemetry_events
+                    WHERE quality = 0
+                    GROUP BY bucket, factory_id, tag, equipment_type, equipment_name, source_id
+                    WITH NO DATA";
+
+                using var create1HourCommand = connection.CreateCommand();
+                create1HourCommand.CommandText = create1HourSql;
+                await create1HourCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                // Add refresh policy
+                var policy1HourSql = @"
+                    SELECT add_continuous_aggregate_policy('sensor_trends_1hour',
+                        start_offset => INTERVAL '25 hours',
+                        end_offset => INTERVAL '1 hour',
+                        schedule_interval => INTERVAL '15 minutes',
+                        if_not_exists => TRUE)";
+
+                using var policy1HourCommand = connection.CreateCommand();
+                policy1HourCommand.CommandText = policy1HourSql;
+                await policy1HourCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                // Create indexes
+                var index1HourSql = @"
+                    CREATE INDEX IF NOT EXISTS idx_sensor_trends_1hour_factory_tag 
+                        ON sensor_trends_1hour (factory_id, tag, bucket DESC)";
+
+                using var index1HourCommand = connection.CreateCommand();
+                index1HourCommand.CommandText = index1HourSql;
+                await index1HourCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                _logger.LogInformation("sensor_trends_1hour continuous aggregate created successfully");
+            }
+            else
+            {
+                _logger.LogInformation("sensor_trends_1hour continuous aggregate already exists");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating continuous aggregates: {ErrorMessage}", ex.Message);
+            _logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
+            throw;
+        }
+    }
+
     private async Task RefreshContinuousAggregatesAsync(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Refreshing continuous aggregates with initial data...");
@@ -208,18 +409,18 @@ public sealed class ContinuousAggregatesSeedService : IHostedService
             using var refresh10MinCommand = connection.CreateCommand();
             refresh10MinCommand.CommandText = refresh10MinSql;
             await refresh10MinCommand.ExecuteNonQueryAsync(cancellationToken);
-            _logger.LogInformation("sensor_readings_10min refreshed");
+            _logger.LogInformation("sensor_readings_10min refreshed successfully");
 
             // Refresh 1-hour aggregate
             var refresh1HourSql = "CALL refresh_continuous_aggregate('sensor_trends_1hour', NULL, NULL)";
             using var refresh1HourCommand = connection.CreateCommand();
             refresh1HourCommand.CommandText = refresh1HourSql;
             await refresh1HourCommand.ExecuteNonQueryAsync(cancellationToken);
-            _logger.LogInformation("sensor_trends_1hour refreshed");
+            _logger.LogInformation("sensor_trends_1hour refreshed successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error refreshing continuous aggregates (this is normal if no data exists yet)");
+            _logger.LogWarning(ex, "Error refreshing continuous aggregates: {ErrorMessage}. This may be normal if views were just created.", ex.Message);
         }
     }
 }
