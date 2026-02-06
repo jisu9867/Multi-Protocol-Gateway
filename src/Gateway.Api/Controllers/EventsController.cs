@@ -29,6 +29,8 @@ public class EventsController : ControllerBase
     /// Get recent telemetry events
     /// </summary>
     /// <param name="factoryId">Optional factory ID filter</param>
+    /// <param name="tag">Optional tag filter (e.g., "temp", "humidity", "power")</param>
+    /// <param name="sourceId">Optional source ID filter (e.g., "ulsan-line1")</param>
     /// <param name="equipmentType">Optional equipment type filter</param>
     /// <param name="equipmentName">Optional equipment name filter</param>
     /// <param name="limit">Maximum number of events to return (default: 50, max: 1000)</param>
@@ -36,6 +38,8 @@ public class EventsController : ControllerBase
     [HttpGet("recent")]
     public async Task<ActionResult<IEnumerable<object>>> GetRecentEvents(
         [FromQuery] Factory? factoryId = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? sourceId = null,
         [FromQuery] string? equipmentType = null,
         [FromQuery] string? equipmentName = null,
         [FromQuery] int limit = 50,
@@ -54,6 +58,16 @@ public class EventsController : ControllerBase
             if (factoryId.HasValue)
             {
                 query = query.Where(e => e.FactoryId == factoryId.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(tag))
+            {
+                query = query.Where(e => e.Tag == tag);
+            }
+
+            if (!string.IsNullOrWhiteSpace(sourceId))
+            {
+                query = query.Where(e => e.SourceId == sourceId);
             }
 
             if (!string.IsNullOrWhiteSpace(equipmentType))

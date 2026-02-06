@@ -102,7 +102,7 @@ else if (_factory != null)
 
 @if (_showRealtimeChart && _selectedSensor != null)
 {
-    <RealtimeSensorChart Sensor="@_selectedSensor" FactoryId="@_factoryId" OnClose="CloseRealtimeChart" />
+    <RealtimeSensorChart Sensor="@_selectedSensor" FactoryId="@_factoryId" LineNumber="@_selectedLineNumber" OnClose="CloseRealtimeChart" />
 }
 else
 {
@@ -192,8 +192,8 @@ else
 
         Logger.LogInformation("Loading factory data for FactoryId={FactoryId}, LineNumber={LineNumber}", Id, _selectedLineNumber);
 
-        // Always group by line
-        _factory = await DataService.GetFactoryAsync(Id, _selectedLineNumber, groupByLine: true);
+        // Get sensor readings for the selected line (each sensor gets its own readings)
+        _factory = await DataService.GetFactoryAsync(Id, _selectedLineNumber, groupByLine: false);
         
         if (_factory != null)
         {

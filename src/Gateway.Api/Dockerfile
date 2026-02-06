@@ -8,14 +8,13 @@ WORKDIR /src
 
 # Copy solution and project files for better layer caching
 COPY ["Directory.Build.props", "./"]
-COPY ["Gateway.sln", "./"]
 COPY ["src/Gateway.Core/Gateway.Core.csproj", "src/Gateway.Core/"]
 COPY ["src/Gateway.Infrastructure/Gateway.Infrastructure.csproj", "src/Gateway.Infrastructure/"]
 COPY ["src/Gateway.Adapters/Gateway.Adapters.csproj", "src/Gateway.Adapters/"]
 COPY ["src/Gateway.Api/Gateway.Api.csproj", "src/Gateway.Api/"]
 
-# Restore dependencies using solution file
-RUN dotnet restore "Gateway.sln" --verbosity quiet
+# Restore dependencies for Gateway.Api project (which will restore all dependencies transitively)
+RUN dotnet restore "src/Gateway.Api/Gateway.Api.csproj" --verbosity quiet
 
 # Copy remaining source files
 COPY . .

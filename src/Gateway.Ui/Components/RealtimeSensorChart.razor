@@ -107,6 +107,7 @@
 @code {
     [Parameter] public SensorData? Sensor { get; set; }
     [Parameter] public FactoryEnum FactoryId { get; set; }
+    [Parameter] public int? LineNumber { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
 
     [Inject] private SignalRService SignalRService { get; set; } = null!;
@@ -138,10 +139,13 @@
             var factoryId = FactoryId.ToString();
             var tag = MapSensorTypeToTag(Sensor.Type);
             
-            Logger.LogInformation("Loading initial data for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
+            // Extract SourceId from Sensor.Id (format: {factory}-line{number} or just sourceId)
+            var sourceId = Sensor.Id;
+            
+            Logger.LogInformation("Loading initial data for Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}", factoryId, tag, sourceId);
             
             // Load initial latest data before subscribing to real-time updates
-            await LoadInitialDataAsync(factoryId, tag);
+            await LoadInitialDataAsync(factoryId, tag, sourceId);
             
             Logger.LogInformation("Initial data loaded. Data points count: {Count}", _dataPoints.Count);
             
@@ -157,17 +161,14 @@
                 return;
             }
 
-            // Subscribe to all sources for this factory and tag (sourceId can be null to receive all)
-            // This allows receiving data from any sourceId that matches the factory and tag
-            var sourceId = (string?)null; // Subscribe to all sources for this factory+tag combination
-
-            Logger.LogInformation("Subscribing to: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId} (null = all sources)", 
-                factoryId, tag, sourceId ?? "all");
+            // Subscribe to specific sourceId for this factory and tag
+            Logger.LogInformation("Subscribing to: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}", 
+                factoryId, tag, sourceId);
 
             // Register callback for receiving events BEFORE subscribing
             SignalRService.OnReceiveTelemetryEvent(OnTelemetryEventReceived);
 
-            // Subscribe to sensor updates (without sourceId filter to receive all matching events)
+            // Subscribe to sensor updates for specific sourceId
             await SignalRService.SubscribeToSensorAsync(factoryId, tag, sourceId);
 
             Logger.LogInformation("Successfully subscribed to real-time sensor data");
@@ -180,13 +181,13 @@
         }
     }
 
-    private async Task LoadInitialDataAsync(string factoryId, string tag)
+    private async Task LoadInitialDataAsync(string factoryId, string tag, string sourceId)
     {
         try
         {
             Logger.LogInformation("Loading initial latest data for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
             
-            // Get latest events from API - get more to ensure we have enough after filtering by tag
+            // Get latest events from API - use tag filter to get only relevant events
             // Use the same base URL as TelemetryDataService
             var apiBaseUrl = Configuration["GatewayApi:BaseUrl"] ?? "http://localhost:5011";
             if (apiBaseUrl.EndsWith("/"))
@@ -201,9 +202,11 @@
                 factoryEnum = parsedFactory;
             }
             
+            // Get recent events filtered by factory, tag, and sourceId
+            // Get enough events to ensure we have MaxDataPoints for this specific sourceId
             var url = factoryEnum.HasValue
-                ? $"{apiBaseUrl}/api/events/recent?factoryId={factoryEnum.Value}&limit={MaxDataPoints * 10}" // Get more to filter by tag
-                : $"{apiBaseUrl}/api/events/recent?limit={MaxDataPoints * 10}";
+                ? $"{apiBaseUrl}/api/events/recent?factoryId={factoryEnum.Value}&tag={Uri.EscapeDataString(tag)}&sourceId={Uri.EscapeDataString(sourceId)}&limit={MaxDataPoints * 2}" // Get more to ensure we have enough
+                : $"{apiBaseUrl}/api/events/recent?tag={Uri.EscapeDataString(tag)}&sourceId={Uri.EscapeDataString(sourceId)}&limit={MaxDataPoints * 2}";
             
             Logger.LogInformation("Calling API: {Url}", url);
             var response = await HttpClient.GetAsync(url);
@@ -227,24 +230,10 @@
                 {
                     try
                     {
-                        // Extract tag from the JSON element
-                        var eventTag = element.TryGetProperty("tag", out var tagProp) 
-                            ? tagProp.GetString() ?? "" 
-                            : "";
-                        
-                        // Filter by tag
-                        if (!eventTag.Equals(tag, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-                        
                         // Extract value from ValueJson (which is a JSON string or object)
                         // API returns "value" as ValueJson which can be a JSON string
                         var valueJson = element.TryGetProperty("value", out var valueProp) ? valueProp : default;
                         var value = ExtractValueFromJson(valueJson);
-                        
-                        Logger.LogDebug("Parsed event: Tag={Tag}, Value={Value}, SourceId={SourceId}", 
-                            eventTag, value, element.TryGetProperty("sourceId", out var sid) ? sid.GetString() : "");
                         
                         // Parse EventId (can be Guid or string)
                         Guid eventIdGuid = Guid.Empty;
@@ -274,6 +263,11 @@
                                 }
                             }
                         }
+                        
+                        // Extract tag
+                        var eventTag = element.TryGetProperty("tag", out var tagProp) 
+                            ? tagProp.GetString() ?? "" 
+                            : "";
                         
                         // Convert to TelemetryEventDto
                         var eventDto = new TelemetryEventDto
@@ -320,53 +314,41 @@
                     }
                 }
                 
-                Logger.LogInformation("Filtered to {Count} events matching tag {Tag}", events.Count, tag);
+                Logger.LogInformation("Parsed {Count} events matching tag {Tag}", events.Count, tag);
                 
-                // Sort by timestamp descending and take latest MaxDataPoints
+                // Filter by sourceId to get only events for this specific sensor
                 var filteredEvents = events
+                    .Where(e => e.SourceId.Equals(sourceId, StringComparison.OrdinalIgnoreCase))
                     .OrderByDescending(e => e.Timestamp)
                     .Take(MaxDataPoints)
                     .OrderBy(e => e.Timestamp) // Sort ascending for display
                     .ToList();
                 
-                Logger.LogInformation("Loaded {Count} initial data points (filtered from {Total} events)", filteredEvents.Count, events.Count);
+                Logger.LogInformation("Filtered to {Count} events for SourceId={SourceId} (max {MaxPoints})", 
+                    filteredEvents.Count, sourceId, MaxDataPoints);
+                
+                // Initialize series data for this specific sourceId
+                _seriesData.Clear();
+                _dataPoints.Clear();
                 
                 if (filteredEvents.Any())
                 {
-                    // Initialize data points
+                    _seriesData[sourceId] = new SeriesData
+                    {
+                        SourceId = sourceId,
+                        EquipmentName = filteredEvents.First().EquipmentName,
+                        Color = GetColorForSeries(0),
+                        DataPoints = filteredEvents
+                    };
+                    
                     _dataPoints = filteredEvents;
-                    
-                    // Initialize series data
-                    _seriesData.Clear();
-                    foreach (var evt in filteredEvents)
-                    {
-                        var key = evt.SourceId;
-                        if (!_seriesData.ContainsKey(key))
-                        {
-                            _seriesData[key] = new SeriesData
-                            {
-                                SourceId = key,
-                                EquipmentName = evt.EquipmentName,
-                                Color = GetColorForSeries(_seriesData.Count),
-                                DataPoints = new List<TelemetryEventDto>()
-                            };
-                        }
-                        _seriesData[key].DataPoints.Add(evt);
-                    }
-                    
-                    // Keep only last MaxDataPoints per series
-                    foreach (var series in _seriesData.Values)
-                    {
-                        if (series.DataPoints.Count > MaxDataPoints)
-                        {
-                            series.DataPoints = series.DataPoints
-                                .OrderByDescending(p => p.Timestamp)
-                                .Take(MaxDataPoints)
-                                .OrderBy(p => p.Timestamp)
-                                .ToList();
-                        }
-                    }
-                    
+                }
+                
+                Logger.LogInformation("Loaded {Count} initial data points for SourceId={SourceId}", 
+                    _dataPoints.Count, sourceId);
+                
+                if (_dataPoints.Any())
+                {
                     // Update min/max values
                     UpdateMinMax();
                     
@@ -376,7 +358,7 @@
                 }
                 else
                 {
-                    Logger.LogInformation("No initial data found for Factory={FactoryId}, Tag={Tag}", factoryId, tag);
+                    Logger.LogInformation("No initial data found for Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}", factoryId, tag, sourceId);
                 }
             }
             else
@@ -453,18 +435,20 @@
         Logger.LogInformation("Received event: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}", 
             eventDto.FactoryId, eventDto.Tag, eventDto.SourceId, eventDto.Value);
         
-        // Filter by factory and tag only (sourceId can vary)
+        // Filter by factory, tag, and sourceId
         var tag = MapSensorTypeToTag(Sensor?.Type ?? "");
         var expectedFactoryId = FactoryId.ToString();
+        var expectedSourceId = Sensor?.Id ?? "";
         
         // Check if this event matches our subscription
         bool matchesFactory = eventDto.FactoryId.Equals(expectedFactoryId, StringComparison.OrdinalIgnoreCase);
         bool matchesTag = eventDto.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase);
+        bool matchesSourceId = eventDto.SourceId.Equals(expectedSourceId, StringComparison.OrdinalIgnoreCase);
         
-        if (!matchesFactory || !matchesTag)
+        if (!matchesFactory || !matchesTag || !matchesSourceId)
         {
-            Logger.LogDebug("Event filtered out: Factory={MatchesFactory} (Expected={ExpectedFactory}, Got={GotFactory}), Tag={MatchesTag} (Expected={ExpectedTag}, Got={GotTag})", 
-                matchesFactory, expectedFactoryId, eventDto.FactoryId, matchesTag, tag, eventDto.Tag);
+            Logger.LogDebug("Event filtered out: Factory={MatchesFactory}, Tag={MatchesTag}, SourceId={MatchesSourceId} (Expected={ExpectedSourceId}, Got={GotSourceId})", 
+                matchesFactory, matchesTag, matchesSourceId, expectedSourceId, eventDto.SourceId);
             return;
         }
 
@@ -473,15 +457,7 @@
 
         InvokeAsync(() =>
         {
-            _dataPoints.Add(eventDto);
-            
-            // Keep only last MaxDataPoints
-            if (_dataPoints.Count > MaxDataPoints)
-            {
-                _dataPoints.RemoveAt(0);
-            }
-
-            // Group by equipment name (sourceId) for multiple lines
+            // Group by SourceId for multiple lines
             var key = eventDto.SourceId;
             if (!_seriesData.ContainsKey(key))
             {
@@ -494,13 +470,49 @@
                 };
             }
 
-            _seriesData[key].DataPoints.Add(eventDto);
+            // Add new event to the series (append to existing data, don't replace)
+            // Check if this event already exists (by EventId or timestamp + sourceId) to avoid duplicates
+            var existingEvent = _seriesData[key].DataPoints.FirstOrDefault(p => 
+                (p.EventId != Guid.Empty && p.EventId == eventDto.EventId) ||
+                (p.Timestamp == eventDto.Timestamp && p.SourceId == eventDto.SourceId));
             
-            // Keep only last MaxDataPoints per series
-            if (_seriesData[key].DataPoints.Count > MaxDataPoints)
+            if (existingEvent == null)
             {
-                _seriesData[key].DataPoints.RemoveAt(0);
+                // Add new event to the end of the list
+                _seriesData[key].DataPoints.Add(eventDto);
+                
+                // Sort by timestamp to maintain chronological order
+                _seriesData[key].DataPoints = _seriesData[key].DataPoints
+                    .OrderBy(e => e.Timestamp)
+                    .ToList();
+                
+                // Keep only last MaxDataPoints per series (FIFO: remove oldest if exceeds limit)
+                if (_seriesData[key].DataPoints.Count > MaxDataPoints)
+                {
+                    // Remove the oldest (first) data points
+                    var removeCount = _seriesData[key].DataPoints.Count - MaxDataPoints;
+                    _seriesData[key].DataPoints.RemoveRange(0, removeCount);
+                }
             }
+            else
+            {
+                // Update existing event if needed
+                var index = _seriesData[key].DataPoints.IndexOf(existingEvent);
+                if (index >= 0)
+                {
+                    _seriesData[key].DataPoints[index] = eventDto;
+                }
+            }
+
+            // Rebuild _dataPoints from all series (sorted by timestamp)
+            _dataPoints.Clear();
+            foreach (var series in _seriesData.Values)
+            {
+                _dataPoints.AddRange(series.DataPoints);
+            }
+            _dataPoints = _dataPoints
+                .OrderBy(e => e.Timestamp)
+                .ToList();
 
             // Update min/max values
             UpdateMinMax();
@@ -640,7 +652,8 @@
         {
             var factoryId = FactoryId.ToString();
             var tag = MapSensorTypeToTag(Sensor.Type);
-            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, null); // Unsubscribe from all sources
+            var sourceId = Sensor.Id;
+            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, sourceId);
             SignalRService.RemoveCallback(OnTelemetryEventReceived);
         }
         await OnClose.InvokeAsync();
@@ -652,7 +665,8 @@
         {
             var factoryId = FactoryId.ToString();
             var tag = MapSensorTypeToTag(Sensor.Type);
-            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, null); // Unsubscribe from all sources
+            var sourceId = Sensor.Id;
+            await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, sourceId);
             SignalRService.RemoveCallback(OnTelemetryEventReceived);
         }
     }
