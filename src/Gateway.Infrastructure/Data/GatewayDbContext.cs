@@ -14,6 +14,8 @@ public sealed class GatewayDbContext : DbContext
     }
 
     public DbSet<TelemetryEventEntity> TelemetryEvents { get; set; } = null!;
+    public DbSet<SensorAggregation10MinEntity> SensorAggregations10Min { get; set; } = null!;
+    public DbSet<SensorAggregation1HourEntity> SensorAggregations1Hour { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -103,6 +105,127 @@ public sealed class GatewayDbContext : DbContext
 
             entity.Property(e => e.TraceId)
                 .HasMaxLength(256);
+        });
+
+        // Configure 10-minute aggregation table
+        modelBuilder.Entity<SensorAggregation10MinEntity>(entity =>
+        {
+            entity.ToTable("sensor_agg_10min");
+
+            // Composite Primary Key
+            entity.HasKey(e => new { e.Bucket, e.FactoryId, e.Tag, e.EquipmentType, e.EquipmentName, e.SourceId });
+
+            // Indexes for query performance
+            entity.HasIndex(e => new { e.FactoryId, e.Tag, e.Bucket })
+                .HasDatabaseName("IX_sensor_agg_10min_factory_tag_bucket")
+                .IsDescending(false, false, true);
+
+            entity.HasIndex(e => e.Bucket)
+                .HasDatabaseName("IX_sensor_agg_10min_bucket")
+                .IsDescending(true);
+
+            entity.HasIndex(e => e.LastTimestamp)
+                .HasDatabaseName("IX_sensor_agg_10min_last_timestamp")
+                .IsDescending(true);
+
+            // Property configurations
+            entity.Property(e => e.Bucket)
+                .IsRequired();
+
+            entity.Property(e => e.FactoryId)
+                .IsRequired()
+                .HasConversion<int>();
+
+            entity.Property(e => e.Tag)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.EquipmentType)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.EquipmentName)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.SourceId)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.AvgValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.MinValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.MaxValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.Count)
+                .IsRequired();
+
+            entity.Property(e => e.LastTimestamp)
+                .IsRequired();
+        });
+
+        // Configure 1-hour aggregation table
+        modelBuilder.Entity<SensorAggregation1HourEntity>(entity =>
+        {
+            entity.ToTable("sensor_agg_1hour");
+
+            // Composite Primary Key
+            entity.HasKey(e => new { e.Bucket, e.FactoryId, e.Tag, e.EquipmentType, e.EquipmentName, e.SourceId });
+
+            // Indexes for query performance
+            entity.HasIndex(e => new { e.FactoryId, e.Tag, e.Bucket })
+                .HasDatabaseName("IX_sensor_agg_1hour_factory_tag_bucket")
+                .IsDescending(false, false, true);
+
+            entity.HasIndex(e => e.Bucket)
+                .HasDatabaseName("IX_sensor_agg_1hour_bucket")
+                .IsDescending(true);
+
+            // Property configurations
+            entity.Property(e => e.Bucket)
+                .IsRequired();
+
+            entity.Property(e => e.FactoryId)
+                .IsRequired()
+                .HasConversion<int>();
+
+            entity.Property(e => e.Tag)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.EquipmentType)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.EquipmentName)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.SourceId)
+                .HasMaxLength(256)
+                .IsRequired();
+
+            entity.Property(e => e.AvgValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.MinValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.MaxValue)
+                .HasColumnType("numeric")
+                .IsRequired();
+
+            entity.Property(e => e.Count)
+                .IsRequired();
         });
     }
 }

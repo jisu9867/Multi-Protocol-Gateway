@@ -14,15 +14,15 @@ COPY ["src/Gateway.Infrastructure/Gateway.Infrastructure.csproj", "src/Gateway.I
 COPY ["src/Gateway.Adapters/Gateway.Adapters.csproj", "src/Gateway.Adapters/"]
 COPY ["src/Gateway.Api/Gateway.Api.csproj", "src/Gateway.Api/"]
 
-# Restore dependencies
-RUN dotnet restore "src/Gateway.Api/Gateway.Api.csproj"
+# Restore dependencies using solution file
+RUN dotnet restore "Gateway.sln" --verbosity quiet
 
 # Copy remaining source files
 COPY . .
 
 # Build the project
 WORKDIR "/src/src/Gateway.Api"
-RUN dotnet build "Gateway.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build --no-restore
+RUN dotnet build "Gateway.Api.csproj" -c $BUILD_CONFIGURATION -o /app/build --no-restore /p:UseAppHost=false
 
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release

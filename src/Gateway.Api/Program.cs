@@ -142,6 +142,33 @@ builder.Services.AddSingleton<ISink>(sp => sp.GetRequiredService<PostgreSqlSink>
 // Service that connects Kafka Consumer to PostgreSQL Sink
 builder.Services.AddHostedService<KafkaToPostgreSqlService>();
 
+// Kafka Consumer for Aggregation (separate consumer group for aggregation processing)
+builder.Services.AddKeyedSingleton<KafkaConsumer>("Aggregation", (sp, key) =>
+{
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+    var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
+    var logger = loggerFactory.CreateLogger<KafkaConsumer>();
+    var programLogger = sp.GetRequiredService<ILogger<Program>>();
+    
+    // Use separate consumer group ID for aggregation
+    // Use "earliest" offset reset to process all messages (including historical data)
+    var aggregationConsumerGroupId = "gateway-aggregator-consumer-group-v1";
+    
+    programLogger.LogInformation("Creating Aggregation Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: earliest", aggregationConsumerGroupId);
+    logger.LogInformation("Creating Aggregation Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: earliest", aggregationConsumerGroupId);
+    
+    var consumer = new KafkaConsumer(logger, kafkaOptions, consumerGroupId: aggregationConsumerGroupId, autoOffsetReset: "earliest");
+    programLogger.LogInformation("Aggregation Kafka Consumer instance created successfully");
+    return consumer;
+});
+
+// Aggregation Service (consumes from Aggregation Kafka Consumer and stores aggregated results)
+builder.Services.AddHostedService<AggregationService>();
+
+// Aggregation Table Populator Service (populates aggregation tables from existing telemetry_events data)
+// Runs once at startup if aggregation tables are empty
+builder.Services.AddHostedService<AggregationTablePopulatorService>();
+
 // Kafka Consumer for SignalR (separate consumer group for real-time streaming)
 // Use KeyedService to register a second instance with different consumer group ID
 builder.Services.AddKeyedSingleton<KafkaConsumer>("SignalR", (sp, key) =>
@@ -235,16 +262,17 @@ if (adapterOptions.Mqtt.Enabled)
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();
 
-// Continuous aggregates seed service (controlled by ENABLE_SEED_DATA environment variable)
-// When enabled: seeds data, creates hypertable, creates views, and refreshes views
-// Check if seed data is enabled via environment variable or configuration
+// Seed data service (controlled by ENABLE_SEED_DATA environment variable or Gateway:EnableSeedData configuration)
+// When enabled: seeds data into telemetry_events and populates aggregation tables
 var enableSeedData = builder.Configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
-                     builder.Configuration.GetValue<bool>("ENABLE_SEED_DATA", false);
+                     builder.Configuration.GetValue<bool>("ENABLE_SEED_DATA", false) ||
+                     bool.TryParse(Environment.GetEnvironmentVariable("ENABLE_SEED_DATA"), out var seedEnvValue) && seedEnvValue;
 
 if (enableSeedData)
 {
-    builder.Services.AddHostedService<ContinuousAggregatesSeedService>();
+    builder.Services.AddHostedService<SeedDataService>();
 }
+
 
 var app = builder.Build();
 
@@ -406,232 +434,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// Ensure hypertable and continuous aggregates (views) are created after migrations
-using (var scope = app.Services.CreateScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
-    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-    
-    try
-    {
-        logger.LogInformation("Ensuring hypertable and continuous aggregates are created...");
-        await EnsureHypertableAndViewsAsync(dbContext, logger);
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Error ensuring hypertable and views: {ErrorMessage}", ex.Message);
-        logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
-        // Don't throw - allow app to start even if view creation fails
-    }
-}
 
 app.Run();
-
-static async Task EnsureHypertableAndViewsAsync(GatewayDbContext dbContext, Microsoft.Extensions.Logging.ILogger logger)
-{
-    try
-    {
-        var connection = dbContext.Database.GetDbConnection();
-        
-        if (connection.State != System.Data.ConnectionState.Open)
-        {
-            await connection.OpenAsync();
-        }
-        
-        logger.LogInformation("Executing TimescaleDB setup SQL...");
-        
-        // TimescaleDB extension 확인 및 생성
-        var extensionSql = "CREATE EXTENSION IF NOT EXISTS timescaledb;";
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = extensionSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("TimescaleDB extension ensured");
-        
-        // Hypertable 생성
-        var hypertableSql = @"
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM timescaledb_information.hypertables 
-                    WHERE hypertable_name = 'telemetry_events'
-                ) THEN
-                    IF EXISTS (SELECT 1 FROM telemetry_events LIMIT 1) THEN
-                        PERFORM create_hypertable('telemetry_events', 'timestamp', migrate_data => TRUE);
-                    ELSE
-                        PERFORM create_hypertable('telemetry_events', 'timestamp', if_not_exists => TRUE);
-                    END IF;
-                END IF;
-            END $$;";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = hypertableSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("Hypertable ensured");
-        
-        // sensor_readings_10min 뷰 생성
-        var view10MinSql = @"
-            CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_readings_10min
-            WITH (timescaledb.continuous) AS
-            SELECT 
-                time_bucket('10 minutes', timestamp) AS bucket,
-                factory_id,
-                tag,
-                equipment_type,
-                equipment_name,
-                source_id,
-                AVG((value_json::jsonb->>'value')::numeric) AS avg_value,
-                MIN((value_json::jsonb->>'value')::numeric) AS min_value,
-                MAX((value_json::jsonb->>'value')::numeric) AS max_value,
-                COUNT(*) AS count,
-                MAX(timestamp) AS last_timestamp
-            FROM telemetry_events
-            WHERE quality = 0
-            GROUP BY bucket, factory_id, tag, equipment_type, equipment_name, source_id
-            WITH NO DATA;";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = view10MinSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_readings_10min view created");
-        
-        // sensor_readings_10min 정책 추가
-        var policy10MinSql = @"
-            SELECT add_continuous_aggregate_policy('sensor_readings_10min',
-                start_offset => INTERVAL '3 hours',
-                end_offset => INTERVAL '10 minutes',
-                schedule_interval => INTERVAL '5 minutes',
-                if_not_exists => TRUE);";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = policy10MinSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_readings_10min policy added");
-        
-        // sensor_readings_10min 인덱스 생성
-        var index10MinSql = @"
-            CREATE INDEX IF NOT EXISTS idx_sensor_readings_10min_factory_tag 
-                ON sensor_readings_10min (factory_id, tag, bucket DESC);
-            CREATE INDEX IF NOT EXISTS idx_sensor_readings_10min_last_timestamp 
-                ON sensor_readings_10min (last_timestamp DESC);";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = index10MinSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_readings_10min indexes created");
-        
-        // sensor_trends_1hour 뷰 생성
-        var view1HourSql = @"
-            CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_trends_1hour
-            WITH (timescaledb.continuous) AS
-            SELECT 
-                time_bucket('1 hour', timestamp) AS bucket,
-                factory_id,
-                tag,
-                equipment_type,
-                equipment_name,
-                source_id,
-                AVG((value_json::jsonb->>'value')::numeric) AS avg_value,
-                MIN((value_json::jsonb->>'value')::numeric) AS min_value,
-                MAX((value_json::jsonb->>'value')::numeric) AS max_value,
-                COUNT(*) AS count
-            FROM telemetry_events
-            WHERE quality = 0
-            GROUP BY bucket, factory_id, tag, equipment_type, equipment_name, source_id
-            WITH NO DATA;";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = view1HourSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_trends_1hour view created");
-        
-        // sensor_trends_1hour 정책 추가
-        var policy1HourSql = @"
-            SELECT add_continuous_aggregate_policy('sensor_trends_1hour',
-                start_offset => INTERVAL '25 hours',
-                end_offset => INTERVAL '1 hour',
-                schedule_interval => INTERVAL '15 minutes',
-                if_not_exists => TRUE);";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = policy1HourSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_trends_1hour policy added");
-        
-        // sensor_trends_1hour 인덱스 생성
-        var index1HourSql = @"
-            CREATE INDEX IF NOT EXISTS idx_sensor_trends_1hour_factory_tag 
-                ON sensor_trends_1hour (factory_id, tag, bucket DESC);";
-        
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = index1HourSql;
-            await command.ExecuteNonQueryAsync();
-        }
-        logger.LogInformation("sensor_trends_1hour indexes created");
-        
-        // 기존 데이터가 있으면 refresh
-        var checkDataSql = "SELECT COUNT(*) FROM telemetry_events WHERE quality = 0";
-        using (var command = connection.CreateCommand())
-        {
-            command.CommandText = checkDataSql;
-            var dataCount = Convert.ToInt32(await command.ExecuteScalarAsync());
-            
-            if (dataCount > 0)
-            {
-                logger.LogInformation("Refreshing views with existing data ({Count} records)...", dataCount);
-                
-                try
-                {
-                    var refresh10MinSql = "CALL refresh_continuous_aggregate('sensor_readings_10min', NULL, NULL)";
-                    using (var refreshCommand = connection.CreateCommand())
-                    {
-                        refreshCommand.CommandText = refresh10MinSql;
-                        await refreshCommand.ExecuteNonQueryAsync();
-                    }
-                    logger.LogInformation("sensor_readings_10min refreshed successfully");
-                    
-                    var refresh1HourSql = "CALL refresh_continuous_aggregate('sensor_trends_1hour', NULL, NULL)";
-                    using (var refreshCommand = connection.CreateCommand())
-                    {
-                        refreshCommand.CommandText = refresh1HourSql;
-                        await refreshCommand.ExecuteNonQueryAsync();
-                    }
-                    logger.LogInformation("sensor_trends_1hour refreshed successfully");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Error refreshing views (this may be normal if views were just created): {Message}", ex.Message);
-                }
-            }
-            else
-            {
-                logger.LogInformation("No existing data found, skipping view refresh");
-            }
-        }
-        
-        await connection.CloseAsync();
-        logger.LogInformation("Hypertable and continuous aggregates setup completed successfully");
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Error ensuring hypertable and views: {ErrorMessage}", ex.Message);
-        logger.LogError(ex, "Stack trace: {StackTrace}", ex.StackTrace);
-        throw;
-    }
-}
 
 public partial class Program { }

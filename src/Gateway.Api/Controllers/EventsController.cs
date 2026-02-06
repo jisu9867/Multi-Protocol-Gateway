@@ -170,7 +170,7 @@ public class EventsController : ControllerBase
 
             var aggregateQuery = $@"
                 {selectClause}
-                FROM sensor_readings_10min
+                FROM sensor_agg_10min
                 WHERE {whereClause}
                 {orderClause}";
 
@@ -349,13 +349,13 @@ public class EventsController : ControllerBase
                 whereClause += " AND source_id LIKE @linePattern";
             }
 
-            // Query the continuous aggregate view for last 24 hours
+            // Query the aggregation table for last 24 hours
             var query = $@"
                 SELECT 
                     bucket,
                     tag,
                     AVG(avg_value) as avg_value
-                FROM sensor_trends_1hour
+                FROM sensor_agg_1hour
                 WHERE {whereClause}
                 GROUP BY bucket, tag
                 ORDER BY bucket ASC";
