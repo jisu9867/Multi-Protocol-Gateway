@@ -1,0 +1,104 @@
+# Prometheus Alert Rules for Gateway
+groups:
+  - name: gateway_alerts
+    interval: 30s
+    rules:
+      # Kafka Consumer Lag Alert
+      - alert: HighKafkaConsumerLag
+        expr: kafka_consumer_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "High Kafka consumer lag detected"
+          description: "Consumer group {{ $labels.consumer_group }} on topic {{ $labels.topic }} partition {{ $labels.partition }} has lag of {{ $value }} messages"
+
+      # Critical Kafka Consumer Lag Alert
+      - alert: CriticalKafkaConsumerLag
+        expr: kafka_consumer_lag > 50000
+        for: 2m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Critical Kafka consumer lag detected"
+          description: "Consumer group {{ $labels.consumer_group }} on topic {{ $labels.topic }} partition {{ $labels.partition }} has critical lag of {{ $value }} messages"
+
+      # Pipeline Queue Backpressure Alert
+      - alert: PipelineQueueBackpressure
+        expr: pipeline_stage_queue_length > 800
+        for: 3m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "Pipeline queue backpressure detected"
+          description: "Pipeline stage {{ $labels.stage }} has queue length of {{ $value }} (capacity: 1000)"
+
+      # Critical Pipeline Queue Backpressure
+      - alert: CriticalPipelineQueueBackpressure
+        expr: pipeline_stage_queue_length > 950
+        for: 1m
+        labels:
+          severity: critical
+          component: pipeline
+        annotations:
+          summary: "Critical pipeline queue backpressure"
+          description: "Pipeline stage {{ $labels.stage }} is near capacity with queue length {{ $value }}"
+
+      # High Kafka Processing Duration
+      - alert: HighKafkaProcessingDuration
+        expr: histogram_quantile(0.95, kafka_processing_duration_seconds_bucket) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "High Kafka processing duration"
+          description: "95th percentile Kafka processing duration is {{ $value }}s for consumer group {{ $labels.consumer_group }}"
+
+      # High SignalR Send Latency
+      - alert: HighSignalRSendLatency
+        expr: histogram_quantile(0.95, signalr_send_latency_seconds_bucket) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: signalr
+        annotations:
+          summary: "High SignalR send latency"
+          description: "95th percentile SignalR send latency is {{ $value }}s for factory {{ $labels.factory_id }} tag {{ $labels.tag }}"
+
+      # High MQTT Ingest Latency
+      - alert: HighMqttIngestLatency
+        expr: histogram_quantile(0.95, mqtt_ingest_latency_seconds_bucket) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: mqtt
+        annotations:
+          summary: "High MQTT ingest latency"
+          description: "95th percentile MQTT ingest latency is {{ $value }}s for topic {{ $labels.topic }}"
+
+      # Kafka Message Processing Errors
+      - alert: HighKafkaMessageErrors
+        expr: rate(kafka_messages_processed_total{status="error"}[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "High Kafka message processing error rate"
+          description: "Error rate is {{ $value }} errors/sec for consumer group {{ $labels.consumer_group }}"
+
+      # Pipeline Drop Rate Alert
+      - alert: HighPipelineDropRate
+        expr: rate(pipeline_dropped_total[5m]) > 10
+        for: 3m
+        labels:
+          severity: warning
+          component: pipeline
+        annotations:
+          summary: "High pipeline drop rate"
+          description: "Pipeline is dropping {{ $value }} messages/sec"
+

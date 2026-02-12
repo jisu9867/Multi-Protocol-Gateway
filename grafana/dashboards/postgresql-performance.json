@@ -1,0 +1,89 @@
+{
+  "uid": "postgresql-performance",
+  "title": "PostgreSQL 성능",
+  "tags": ["gateway", "postgresql", "database"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Query Execution Time",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, http_server_request_duration_seconds_bucket{http_route=\"/api/events\"})",
+          "legendFormat": "P95 Query Time",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, http_server_request_duration_seconds_bucket{http_route=\"/api/events\"})",
+          "legendFormat": "P99 Query Time",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Insert Throughput",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "rate(pipeline_persisted_total[5m])",
+          "legendFormat": "Inserts/sec",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Inserts/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Database Connection Pool",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "db_client_connections_active",
+          "legendFormat": "Active Connections",
+          "refId": "A"
+        },
+        {
+          "expr": "db_client_connections_idle",
+          "legendFormat": "Idle Connections",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Connections"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Database Errors",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "rate(http_server_request_duration_seconds_count{http_route=\"/api/events\",http_response_status_code=~\"5..\"}[5m])",
+          "legendFormat": "5xx Errors/sec",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Errors/sec"},
+        {"format": "short"}
+      ]
+    }
+  ]
+}

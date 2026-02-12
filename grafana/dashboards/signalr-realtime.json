@@ -1,0 +1,113 @@
+{
+  "uid": "signalr-realtime",
+  "title": "SignalR 실시간 전송",
+  "tags": ["gateway", "signalr", "realtime"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Messages Sent Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "rate(signalr_messages_sent_total[5m])",
+          "legendFormat": "Messages/sec",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Messages/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Send Latency (P95/P99)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, signalr_send_latency_seconds_bucket)",
+          "legendFormat": "P95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, signalr_send_latency_seconds_bucket)",
+          "legendFormat": "P99",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Latency"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Total Messages Sent",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "signalr_messages_sent_total",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Active Connections",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 8},
+      "targets": [
+        {
+          "expr": "signalr_connections_active",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "value",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Send Errors",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [
+        {
+          "expr": "rate(signalr_messages_sent_total{status=\"error\"}[5m])",
+          "legendFormat": "Errors/sec",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Errors/sec"},
+        {"format": "short"}
+      ]
+    }
+  ]
+}

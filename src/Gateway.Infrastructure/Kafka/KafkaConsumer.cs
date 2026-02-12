@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -5,6 +6,7 @@ using Confluent.Kafka;
 using Gateway.Core.Models;
 using Gateway.Core.Pipeline;
 using Gateway.Infrastructure.Configuration;
+using Gateway.Infrastructure.Observability;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -130,6 +132,7 @@ public sealed class KafkaConsumer : BackgroundService
                     _logger.LogInformation("Kafka Consumer [{GroupId}]: Received raw message from topic {Topic}, partition {Partition}, offset {Offset}, message length={MessageLength}", 
                         _consumerGroupId, consumeResult.Topic, consumeResult.Partition, consumeResult.Offset, consumeResult.Message.Value?.Length ?? 0);
 
+                    var processingStopwatch = Stopwatch.StartNew();
                     try
                     {
                         var telemetryEvent = DeserializeMessage(consumeResult.Message);
@@ -145,6 +148,11 @@ public sealed class KafkaConsumer : BackgroundService
                             
                             await _outputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken).ConfigureAwait(false);
                             
+                            processingStopwatch.Stop();
+                            
+                            // Record metrics
+                            KafkaMetrics.RecordMessageProcessed(_consumerGroupId, consumeResult.Topic, processingStopwatch.Elapsed);
+                            
                             _logger.LogInformation("Kafka Consumer [{GroupId}]: Successfully wrote event {EventId} to OutputChannel", _consumerGroupId, telemetryEvent.EventId);
 
                             // Manual commit if auto-commit is disabled
@@ -155,12 +163,18 @@ public sealed class KafkaConsumer : BackgroundService
                         }
                         else
                         {
+                            processingStopwatch.Stop();
+                            KafkaMetrics.RecordMessageError(_consumerGroupId, consumeResult.Topic);
+                            
                             _logger.LogWarning("Failed to deserialize message from Kafka topic {Topic}, partition {Partition}, offset {Offset}",
                                 consumeResult.Topic, consumeResult.Partition, consumeResult.Offset);
                         }
                     }
                     catch (JsonException ex)
                     {
+                        processingStopwatch.Stop();
+                        KafkaMetrics.RecordMessageError(_consumerGroupId, consumeResult.Topic);
+                        
                         _logger.LogWarning(ex, "Failed to deserialize message from Kafka topic {Topic}, partition {Partition}, offset {Offset}",
                             consumeResult.Topic, consumeResult.Partition, consumeResult.Offset);
                         // Continue processing other messages

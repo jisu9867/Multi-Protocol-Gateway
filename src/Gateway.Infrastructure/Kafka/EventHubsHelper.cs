@@ -118,5 +118,36 @@ internal static class EventHubsHelper
             config.SaslPassword = password;
         }
     }
+    
+    /// <summary>
+    /// Applies Event Hubs configuration to AdminClientConfig
+    /// </summary>
+    public static void ApplyEventHubsConfig(AdminClientConfig config, Dictionary<string, string> eventHubsConfig)
+    {
+        if (eventHubsConfig.TryGetValue("bootstrap.servers", out var bootstrapServers))
+        {
+            config.BootstrapServers = bootstrapServers;
+        }
+        
+        if (eventHubsConfig.ContainsKey("security.protocol"))
+        {
+            config.SecurityProtocol = SecurityProtocol.SaslSsl;
+        }
+        
+        if (eventHubsConfig.ContainsKey("sasl.mechanism"))
+        {
+            config.SaslMechanism = SaslMechanism.Plain;
+        }
+        
+        if (eventHubsConfig.TryGetValue("sasl.username", out var username))
+        {
+            config.SaslUsername = username;
+        }
+        
+        if (eventHubsConfig.TryGetValue("sasl.password", out var password))
+        {
+            config.SaslPassword = password;
+        }
+    }
 }
 

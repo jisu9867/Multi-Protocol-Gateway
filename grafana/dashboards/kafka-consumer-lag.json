@@ -1,0 +1,136 @@
+{
+  "uid": "kafka-consumer-lag",
+  "title": "Kafka Consumer Lag",
+  "tags": ["gateway", "kafka"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Consumer Lag by Group",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(kafka_consumer_lag) by (consumer_group)",
+          "legendFormat": "{{consumer_group}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Lag"},
+        {"format": "short"}
+      ],
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {"params": [10000], "type": "gt"},
+            "operator": {"type": "and"},
+            "query": {"params": ["A", "5m", "now"]},
+            "reducer": {"params": [], "type": "last"},
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "for": "5m",
+        "frequency": "10s",
+        "handler": 1,
+        "name": "High Consumer Lag",
+        "noDataState": "no_data",
+        "notifications": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Lag by Partition",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "kafka_consumer_lag",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true},
+            "indexByName": {},
+            "renameByName": {
+              "consumer_group": "Consumer Group",
+              "partition": "Partition",
+              "topic": "Topic",
+              "Value": "Lag"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Committed Offset vs High Watermark",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "kafka_consumer_committed_offset",
+          "legendFormat": "Committed {{consumer_group}}",
+          "refId": "A"
+        },
+        {
+          "expr": "kafka_consumer_high_watermark",
+          "legendFormat": "High Watermark",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Offset"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Kafka Processing Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "rate(kafka_messages_processed_total{status=\"success\"}[5m])",
+          "legendFormat": "{{consumer_group}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Messages/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Kafka Processing Duration",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, kafka_processing_duration_seconds_bucket)",
+          "legendFormat": "P95 {{consumer_group}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, kafka_processing_duration_seconds_bucket)",
+          "legendFormat": "P99 {{consumer_group}}",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    }
+  ]
+}

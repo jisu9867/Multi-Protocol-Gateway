@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Gateway.Core.Adapters;
 using Gateway.Adapters.FakeAdapter;
+using Gateway.Infrastructure.Observability;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MQTTnet.Client;
@@ -337,6 +338,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
 
     private async Task OnMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
     {
+        var ingestStopwatch = Stopwatch.StartNew();
         try
         {
             var topic = arg.ApplicationMessage.Topic;
@@ -503,6 +505,11 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
                     metadata,
                     CancellationToken.None).ConfigureAwait(false);
 
+                ingestStopwatch.Stop();
+                
+                // Record metrics
+                MqttMetrics.RecordMessageIngested(topic, ingestStopwatch.Elapsed);
+
                 // Update metrics
                 lock (_metricsLock)
                 {
@@ -513,10 +520,18 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         }
         catch (JsonException ex)
         {
+            ingestStopwatch.Stop();
+            var topic = arg.ApplicationMessage.Topic;
+            MqttMetrics.RecordIngestError(topic);
+            
             _logger.LogWarning(ex, "Failed to parse MQTT message as JSON");
         }
         catch (Exception ex)
         {
+            ingestStopwatch.Stop();
+            var topic = arg.ApplicationMessage.Topic;
+            MqttMetrics.RecordIngestError(topic);
+            
             _logger.LogError(ex, "Error processing MQTT message");
         }
     }

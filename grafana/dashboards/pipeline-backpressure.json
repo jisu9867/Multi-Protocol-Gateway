@@ -1,0 +1,117 @@
+{
+  "uid": "pipeline-backpressure",
+  "title": "Pipeline Backpressure",
+  "tags": ["gateway", "pipeline", "backpressure"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Stage Queue Lengths",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "pipeline_stage_queue_length",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "short", "label": "Queue Length"},
+        {"format": "short"}
+      ],
+      "alert": {
+        "conditions": [
+          {
+            "evaluator": {"params": [800], "type": "gt"},
+            "operator": {"type": "and"},
+            "query": {"params": ["A", "5m", "now"]},
+            "reducer": {"params": [], "type": "last"},
+            "type": "query"
+          }
+        ],
+        "executionErrorState": "alerting",
+        "for": "3m",
+        "frequency": "10s",
+        "handler": 1,
+        "name": "Pipeline Backpressure Detected",
+        "noDataState": "no_data",
+        "notifications": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Processing Duration (P95/P99)",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, pipeline_processing_duration_seconds_bucket)",
+          "legendFormat": "P95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, pipeline_processing_duration_seconds_bucket)",
+          "legendFormat": "P99",
+          "refId": "B"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "Duration"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Drop Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "rate(pipeline_dropped_total[5m])",
+          "legendFormat": "Dropped",
+          "refId": "A"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Events/sec"},
+        {"format": "short"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Stage Throughput",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "rate(pipeline_ingested_total[5m])",
+          "legendFormat": "Ingested",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(pipeline_normalized_total[5m])",
+          "legendFormat": "Normalized",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(pipeline_routed_total[5m])",
+          "legendFormat": "Routed",
+          "refId": "C"
+        },
+        {
+          "expr": "rate(pipeline_persisted_total[5m])",
+          "legendFormat": "Persisted",
+          "refId": "D"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "Events/sec"},
+        {"format": "short"}
+      ]
+    }
+  ]
+}

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Gateway.Core.Models;
 using Gateway.Api.Hubs;
 using Gateway.Infrastructure.Kafka;
+using Gateway.Infrastructure.Observability;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -76,15 +78,24 @@ public class SignalRTelemetryService : BackgroundService
             _logger.LogInformation("Waiting for messages from Kafka Consumer...");
             await foreach (var telemetryEvent in reader.ReadAllAsync(stoppingToken))
             {
+                var broadcastStopwatch = Stopwatch.StartNew();
                 try
                 {
                     _logger.LogInformation("SignalR: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value})", 
                         telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, ExtractValue(telemetryEvent.Value));
                     
                     await BroadcastTelemetryEvent(telemetryEvent, stoppingToken);
+                    
+                    broadcastStopwatch.Stop();
+                    var factoryIdStr = telemetryEvent.FactoryId.ToString();
+                    SignalRMetrics.RecordMessageSent(factoryIdStr, telemetryEvent.Tag, broadcastStopwatch.Elapsed);
                 }
                 catch (Exception ex)
                 {
+                    broadcastStopwatch.Stop();
+                    var factoryIdStr = telemetryEvent.FactoryId.ToString();
+                    SignalRMetrics.RecordSendError(factoryIdStr, telemetryEvent.Tag);
+                    
                     _logger.LogError(ex, "Error broadcasting telemetry event {EventId}", telemetryEvent.EventId);
                 }
             }

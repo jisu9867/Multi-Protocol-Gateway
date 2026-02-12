@@ -80,10 +80,11 @@
         _ => _alerts
     };
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         // TODO: Implement alerts API endpoint
         _alerts = new List<Alert>();
+        return Task.CompletedTask;
     }
 
     private void SetFilter(string filter)

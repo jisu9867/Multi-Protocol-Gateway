@@ -11,11 +11,18 @@ using Gateway.Infrastructure.Data;
 using Gateway.Infrastructure.Sinks;
 using Gateway.Infrastructure.Kafka;
 using Gateway.Api.Pipeline;
+using Gateway.Infrastructure.Observability;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Logs;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +35,62 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Logging.ClearProviders();
 builder.Host.UseSerilog();
+
+// OpenTelemetry Configuration
+var serviceName = "gateway-api";
+var serviceVersion = "1.0.0";
+
+var resourceBuilder = ResourceBuilder.CreateDefault()
+    .AddService(serviceName: serviceName, serviceVersion: serviceVersion)
+    .AddAttributes(new Dictionary<string, object>
+    {
+        ["deployment.environment"] = builder.Environment.EnvironmentName
+    });
+
+// Configure OpenTelemetry Tracing
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(serviceName, serviceVersion: serviceVersion))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.EnrichWithHttpRequest = (activity, request) =>
+            {
+                activity.SetTag("http.request.method", request.Method);
+                activity.SetTag("http.request.path", request.Path);
+            };
+        })
+        .AddHttpClientInstrumentation(options =>
+        {
+            options.RecordException = true;
+        })
+        .AddEntityFrameworkCoreInstrumentation(options =>
+        {
+            options.SetDbStatementForText = true;
+            options.EnrichWithIDbCommand = (activity, command) =>
+            {
+                activity.SetTag("db.statement", command.CommandText);
+            };
+        })
+        .AddSource("Gateway.Adapters.MqttAdapter")
+        .AddSource("Gateway.Adapters.FakeAdapter")
+        .AddSource("Gateway.Infrastructure.Kafka")
+        .AddSource("Gateway.Api.Pipeline")
+        .AddSource("Gateway.Api.Services")
+        .SetSampler(new TraceIdRatioBasedSampler(1.0)) // Sample 100% in production, adjust as needed
+    )
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("Microsoft.AspNetCore.Hosting")
+        .AddMeter("Microsoft.AspNetCore.Http")
+        .AddMeter("System.Net.Http")
+        .AddPrometheusExporter() // Expose Prometheus metrics endpoint
+    );
+
+// Note: Prometheus metrics are exposed via OpenTelemetry Prometheus exporter at /metrics endpoint
+// No separate Prometheus metrics server needed
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -95,6 +158,10 @@ builder.Services.AddHealthChecks()
 // Pipeline components
 builder.Services.AddSingleton<IPipelineMetrics, DefaultPipelineMetrics>();
 
+// Observability Services
+builder.Services.AddSingleton<PipelineMetricsExporter>();
+builder.Services.AddSingleton<KafkaLagMetrics>();
+
 // Pipeline stages
 builder.Services.AddSingleton<IIngest, IngestStage>();
 builder.Services.AddSingleton<INormalize, NormalizeStage>();
@@ -125,7 +192,13 @@ builder.Services.AddSingleton<KafkaConsumer>(sp =>
     var logger = sp.GetRequiredService<ILogger<KafkaConsumer>>();
     var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
     // Use default consumer group ID for PostgreSQL storage
-    return new KafkaConsumer(logger, kafkaOptions);
+    var consumer = new KafkaConsumer(logger, kafkaOptions);
+    
+    // Register for lag monitoring
+    var lagMetrics = sp.GetRequiredService<KafkaLagMetrics>();
+    lagMetrics.RegisterConsumerGroup(kafkaOptions.Value.ConsumerGroupId, kafkaOptions.Value.Topic);
+    
+    return consumer;
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<KafkaConsumer>());
 
@@ -158,6 +231,11 @@ builder.Services.AddKeyedSingleton<KafkaConsumer>("Aggregation", (sp, key) =>
     logger.LogInformation("Creating Aggregation Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: earliest", aggregationConsumerGroupId);
     
     var consumer = new KafkaConsumer(logger, kafkaOptions, consumerGroupId: aggregationConsumerGroupId, autoOffsetReset: "earliest");
+    
+    // Register for lag monitoring
+    var lagMetrics = sp.GetRequiredService<KafkaLagMetrics>();
+    lagMetrics.RegisterConsumerGroup(aggregationConsumerGroupId, kafkaOptions.Value.Topic);
+    
     programLogger.LogInformation("Aggregation Kafka Consumer instance created successfully");
     return consumer;
 });
@@ -189,6 +267,11 @@ builder.Services.AddKeyedSingleton<KafkaConsumer>("SignalR", (sp, key) =>
     logger.LogInformation("Creating SignalR Kafka Consumer with GroupId: {GroupId}, AutoOffsetReset: latest", signalRConsumerGroupId);
     
     var consumer = new KafkaConsumer(logger, kafkaOptions, consumerGroupId: signalRConsumerGroupId, autoOffsetReset: "latest");
+    
+    // Register for lag monitoring
+    var lagMetrics = sp.GetRequiredService<KafkaLagMetrics>();
+    lagMetrics.RegisterConsumerGroup(signalRConsumerGroupId, kafkaOptions.Value.Topic);
+    
     programLogger.LogInformation("SignalR Kafka Consumer instance created successfully");
     return consumer;
 });
@@ -262,6 +345,14 @@ if (adapterOptions.Mqtt.Enabled)
 // Pipeline service (hosted service)
 builder.Services.AddHostedService<PipelineService>();
 
+// Start observability services
+builder.Services.AddHostedService(sp =>
+{
+    var pipelineMetrics = sp.GetRequiredService<IPipelineMetrics>();
+    var logger = sp.GetRequiredService<ILogger<PipelineMetricsExporter>>();
+    return new PipelineMetricsExporter(pipelineMetrics, logger);
+});
+
 // Seed data service (controlled by ENABLE_SEED_DATA environment variable or Gateway:EnableSeedData configuration)
 // When enabled: seeds data into telemetry_events and populates aggregation tables
 var enableSeedData = builder.Configuration.GetValue<bool>("Gateway:EnableSeedData", false) ||
@@ -280,6 +371,9 @@ var app = builder.Build();
 var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
 appLogger.LogInformation("Application built. All hosted services should be starting now.");
 
+// Prometheus metrics are available via OpenTelemetry Prometheus exporter at /metrics endpoint
+appLogger.LogInformation("OpenTelemetry Prometheus exporter available at /metrics endpoint");
+
 // Configure the HTTP request pipeline
 
 app.UseSerilogRequestLogging();
@@ -287,11 +381,29 @@ app.UseCors();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
+// Prometheus metrics endpoint (OpenTelemetry Prometheus exporter)
+// MUST be before MapControllers() and other endpoint mappings to ensure /metrics is handled by OpenTelemetry
+// This endpoint exposes Prometheus text/plain format metrics from OpenTelemetry
+// UseOpenTelemetryPrometheusScrapingEndpoint() registers middleware that handles GET /metrics requests
+// and returns Prometheus text format (text/plain), not JSON
+// Note: This must be called BEFORE any MapGet("/metrics") or MapControllers() to take precedence
+app.UseOpenTelemetryPrometheusScrapingEndpoint();
+
+// prometheus-net metrics endpoint (for custom metrics like pipeline_*, kafka_*, signalr_*)
+// This endpoint exposes prometheus-net metrics that are not captured by OpenTelemetry
+app.MapGet("/metrics-net", async (HttpContext context) =>
+{
+    context.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+    await using var writer = new StreamWriter(context.Response.Body);
+    await Metrics.DefaultRegistry.CollectAndExportAsTextAsync(writer.BaseStream);
+});
+
 // Health endpoint - using custom HealthController for detailed status
 // Built-in health checks are available at /health/ready and /health/live (if configured)
 
-// Metrics endpoint
-app.MapGet("/metrics", (IPipelineMetrics metrics) =>
+// Legacy metrics endpoint (JSON format) - kept for backward compatibility
+// Note: This is at /metrics/json to avoid conflict with OpenTelemetry /metrics endpoint
+app.MapGet("/metrics/json", (IPipelineMetrics metrics) =>
 {
     var snapshot = metrics.GetSnapshot();
     return Results.Ok(new

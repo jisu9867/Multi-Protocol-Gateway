@@ -505,6 +505,7 @@
             }
 
             // Rebuild _dataPoints from all series (sorted by timestamp)
+            // Keep only the last MaxDataPoints across all series
             _dataPoints.Clear();
             foreach (var series in _seriesData.Values)
             {
@@ -513,6 +514,20 @@
             _dataPoints = _dataPoints
                 .OrderBy(e => e.Timestamp)
                 .ToList();
+            
+            // Keep only last MaxDataPoints across all series
+            if (_dataPoints.Count > MaxDataPoints)
+            {
+                var removeCount = _dataPoints.Count - MaxDataPoints;
+                _dataPoints.RemoveRange(0, removeCount);
+                
+                // Also update each series to remove old data points
+                foreach (var series in _seriesData.Values)
+                {
+                    var oldestTimestamp = _dataPoints.First().Timestamp;
+                    series.DataPoints.RemoveAll(p => p.Timestamp < oldestTimestamp);
+                }
+            }
 
             // Update min/max values
             UpdateMinMax();

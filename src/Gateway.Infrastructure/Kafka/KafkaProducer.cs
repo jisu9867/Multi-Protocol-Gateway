@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -5,6 +6,7 @@ using Confluent.Kafka;
 using Gateway.Core.Models;
 using Gateway.Core.Pipeline;
 using Gateway.Infrastructure.Configuration;
+using Gateway.Infrastructure.Observability;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -196,8 +198,13 @@ public sealed class KafkaProducer : IAsyncDisposable
                 ? GetEventHubNameFromConnectionString() ?? _options.Topic
                 : _options.Topic;
             
+            var stopwatch = Stopwatch.StartNew();
             var deliveryResult = await _producer.ProduceAsync(topic, message, cancellationToken)
                 .ConfigureAwait(false);
+            stopwatch.Stop();
+
+            // Record metrics
+            KafkaMetrics.RecordMessageProduced(topic, stopwatch.Elapsed);
 
             _logger.LogDebug("Published telemetry event {EventId} to {Service} topic {Topic}, partition {Partition}, offset {Offset}",
                 telemetryEvent.EventId, 
@@ -206,6 +213,12 @@ public sealed class KafkaProducer : IAsyncDisposable
         }
         catch (ProduceException<string, string> ex)
         {
+            // Record error metrics
+            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
+                ? GetEventHubNameFromConnectionString() ?? _options.Topic
+                : _options.Topic;
+            KafkaMetrics.RecordProduceError(topic);
+            
             _logger.LogError(ex, "Failed to publish telemetry event {EventId} to Kafka. Error: {Error}, ErrorCode: {ErrorCode}",
                 telemetryEvent.EventId, ex.Error.Reason, ex.Error.Code);
             throw;
