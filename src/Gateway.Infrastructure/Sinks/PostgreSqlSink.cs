@@ -22,6 +22,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
     private readonly ILogger<PostgreSqlSink> _logger;
     private readonly Channel<TelemetryEvent> _inputChannel;
     private readonly PostgreSqlSinkOptions _options;
+    private readonly IPipelineMetrics? _pipelineMetrics;
     private Task? _processingTask;
     private CancellationTokenSource? _cancellationTokenSource;
     private readonly ConcurrentBag<TelemetryEventEntity> _buffer = new();
@@ -32,11 +33,13 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
         IServiceScopeFactory scopeFactory,
         ILogger<PostgreSqlSink> logger,
         IOptions<SinkOptions> sinkOptions,
+        IPipelineMetrics? pipelineMetrics = null,
         BoundedChannelOptions? channelOptions = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _options = sinkOptions.Value.PostgreSql;
+        _pipelineMetrics = pipelineMetrics;
         
         var options = channelOptions ?? new BoundedChannelOptions(1000)
         {
@@ -247,6 +250,16 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             dbContext.TelemetryEvents.AddRange(entities);
             await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             
+            // Record metrics for successfully persisted events
+            var persistedCount = entities.Count;
+            if (_pipelineMetrics != null)
+            {
+                for (int i = 0; i < persistedCount; i++)
+                {
+                    _pipelineMetrics.RecordPersisted();
+                }
+            }
+            
             _logger.LogInformation("Successfully bulk inserted {Count} events to PostgreSQL", entities.Count);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException pgEx && pgEx.SqlState == "23505")
@@ -256,12 +269,14 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             _logger.LogDebug("Duplicate events detected in batch, inserting individually with conflict handling");
             
             dbContext.ChangeTracker.Clear();
+            int successfullyInserted = 0;
             foreach (var entity in entities)
             {
                 try
                 {
                     dbContext.TelemetryEvents.Add(entity);
                     await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                    successfullyInserted++;
                 }
                 catch (DbUpdateException innerEx) when (innerEx.InnerException is PostgresException pgEx2 && pgEx2.SqlState == "23505")
                 {
@@ -272,6 +287,15 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
                 {
                     _logger.LogWarning(innerEx, "Error inserting event {EventId}", entity.EventId);
                     dbContext.ChangeTracker.Clear();
+                }
+            }
+            
+            // Record metrics for successfully persisted events
+            if (_pipelineMetrics != null && successfullyInserted > 0)
+            {
+                for (int i = 0; i < successfullyInserted; i++)
+                {
+                    _pipelineMetrics.RecordPersisted();
                 }
             }
         }
@@ -289,12 +313,14 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             
             // Fallback: try individual inserts
             dbContext.ChangeTracker.Clear();
+            int successfullyInserted = 0;
             foreach (var entity in entities)
             {
                 try
                 {
                     dbContext.TelemetryEvents.Add(entity);
                     await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                    successfullyInserted++;
                 }
                 catch (DbUpdateException innerEx) when (innerEx.InnerException is PostgresException pgEx && pgEx.SqlState == "23505")
                 {
@@ -305,6 +331,15 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
                 {
                     _logger.LogWarning(innerEx, "Error inserting event {EventId}", entity.EventId);
                     dbContext.ChangeTracker.Clear();
+                }
+            }
+            
+            // Record metrics for successfully persisted events
+            if (_pipelineMetrics != null && successfullyInserted > 0)
+            {
+                for (int i = 0; i < successfullyInserted; i++)
+                {
+                    _pipelineMetrics.RecordPersisted();
                 }
             }
         }

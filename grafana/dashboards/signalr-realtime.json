@@ -14,11 +14,18 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "targets": [
         {
-          "expr": "rate(signalr_messages_sent_total[5m])",
-          "legendFormat": "Messages/sec",
-          "refId": "A"
+          "expr": "sum by(factory_id, line_id) (rate(signalr_messages_sent_total{status=\"success\"}[5m]))",
+          "legendFormat": "{{factory_id}} / {{line_id}}",
+          "refId": "A",
+          "format": "time_series"
         }
       ],
+      "legend": {
+        "displayMode": "table",
+        "placement": "bottom",
+        "showLegend": true,
+        "calcs": []
+      },
       "yaxes": [
         {"format": "ops", "label": "Messages/sec"},
         {"format": "short"}
@@ -31,16 +38,24 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, signalr_send_latency_seconds_bucket)",
-          "legendFormat": "P95",
-          "refId": "A"
+          "expr": "histogram_quantile(0.95, sum(rate(signalr_send_latency_seconds_bucket[5m])) by (le, factory_id, line_id))",
+          "legendFormat": "P95 {{factory_id}} / {{line_id}}",
+          "refId": "A",
+          "format": "time_series"
         },
         {
-          "expr": "histogram_quantile(0.99, signalr_send_latency_seconds_bucket)",
-          "legendFormat": "P99",
-          "refId": "B"
+          "expr": "histogram_quantile(0.99, sum(rate(signalr_send_latency_seconds_bucket[5m])) by (le, factory_id, line_id))",
+          "legendFormat": "P99 {{factory_id}} / {{line_id}}",
+          "refId": "B",
+          "format": "time_series"
         }
       ],
+      "legend": {
+        "displayMode": "table",
+        "placement": "bottom",
+        "showLegend": true,
+        "calcs": []
+      },
       "yaxes": [
         {"format": "s", "label": "Latency"},
         {"format": "short"}
@@ -53,7 +68,7 @@
       "gridPos": {"h": 4, "w": 8, "x": 0, "y": 8},
       "targets": [
         {
-          "expr": "signalr_messages_sent_total",
+          "expr": "sum(signalr_messages_sent_total{status=\"success\"})",
           "refId": "A"
         }
       ],
@@ -76,7 +91,7 @@
       "gridPos": {"h": 4, "w": 8, "x": 8, "y": 8},
       "targets": [
         {
-          "expr": "signalr_connections_active",
+          "expr": "sum(signalr_connected_clients)",
           "refId": "A"
         }
       ],
@@ -99,11 +114,18 @@
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
       "targets": [
         {
-          "expr": "rate(signalr_messages_sent_total{status=\"error\"}[5m])",
-          "legendFormat": "Errors/sec",
-          "refId": "A"
+          "expr": "sum by(factory_id, line_id) (rate(signalr_messages_sent_total{status=\"error\"}[5m]))",
+          "legendFormat": "{{factory_id}} / {{line_id}}",
+          "refId": "A",
+          "format": "time_series"
         }
       ],
+      "legend": {
+        "displayMode": "table",
+        "placement": "bottom",
+        "showLegend": true,
+        "calcs": []
+      },
       "yaxes": [
         {"format": "ops", "label": "Errors/sec"},
         {"format": "short"}

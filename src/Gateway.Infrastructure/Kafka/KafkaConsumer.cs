@@ -116,10 +116,21 @@ public sealed class KafkaConsumer : BackgroundService
         {
             _logger.LogInformation("Kafka Consumer [{GroupId}]: Entering message consumption loop", _consumerGroupId);
             
+            var messageCount = 0;
+            var lastLogTime = DateTime.UtcNow;
+            
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
+                    // Log every 30 seconds to confirm we're still waiting
+                    if ((DateTime.UtcNow - lastLogTime).TotalSeconds >= 30)
+                    {
+                        _logger.LogInformation("Kafka Consumer [{GroupId}]: Still waiting for messages from Kafka (processed {Count} messages so far)...", 
+                            _consumerGroupId, messageCount);
+                        lastLogTime = DateTime.UtcNow;
+                    }
+                    
                     _logger.LogDebug("Kafka Consumer [{GroupId}]: Waiting for message from Kafka...", _consumerGroupId);
                     var consumeResult = _consumer.Consume(stoppingToken);
 
@@ -149,11 +160,13 @@ public sealed class KafkaConsumer : BackgroundService
                             await _outputChannel.Writer.WriteAsync(telemetryEvent, stoppingToken).ConfigureAwait(false);
                             
                             processingStopwatch.Stop();
+                            messageCount++;
                             
                             // Record metrics
                             KafkaMetrics.RecordMessageProcessed(_consumerGroupId, consumeResult.Topic, processingStopwatch.Elapsed);
                             
-                            _logger.LogInformation("Kafka Consumer [{GroupId}]: Successfully wrote event {EventId} to OutputChannel", _consumerGroupId, telemetryEvent.EventId);
+                            _logger.LogInformation("Kafka Consumer [{GroupId}]: Successfully wrote event {EventId} to OutputChannel (total processed: {Count})", 
+                                _consumerGroupId, telemetryEvent.EventId, messageCount);
 
                             // Manual commit if auto-commit is disabled
                             if (!_options.Consumer.EnableAutoCommit)

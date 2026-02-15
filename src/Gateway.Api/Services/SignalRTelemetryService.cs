@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using static Gateway.Infrastructure.Observability.MetricLabelHelper;
 
 namespace Gateway.Api.Services;
 
@@ -75,26 +76,66 @@ public class SignalRTelemetryService : BackgroundService
 
         try
         {
-            _logger.LogInformation("Waiting for messages from Kafka Consumer...");
+            _logger.LogInformation("Waiting for messages from Kafka Consumer OutputChannel...");
+            _logger.LogInformation("OutputChannel Reader Completion status: {IsCompleted}", reader.Completion.IsCompleted);
+            
+            // Use a background task to log periodic status updates (only when no messages received)
+            var lastEventTime = DateTime.UtcNow;
+            var statusLogTask = Task.Run(async () =>
+            {
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken).ConfigureAwait(false);
+                    if (!stoppingToken.IsCancellationRequested)
+                    {
+                        var timeSinceLastEvent = DateTime.UtcNow - lastEventTime;
+                        // Only log if no events received in the last 2 minutes (to reduce log noise)
+                        if (timeSinceLastEvent.TotalMinutes >= 2)
+                        {
+                            _logger.LogDebug("SignalRTelemetryService: Still waiting for messages from OutputChannel (Last event: {TimeSinceLastEvent} ago, Reader completed: {IsCompleted})", 
+                                timeSinceLastEvent, reader.Completion.IsCompleted);
+                        }
+                    }
+                }
+            }, stoppingToken);
+            
+            var eventCount = 0;
             await foreach (var telemetryEvent in reader.ReadAllAsync(stoppingToken))
             {
+                // Update last event time to suppress "still waiting" messages
+                lastEventTime = DateTime.UtcNow;
+                
                 var broadcastStopwatch = Stopwatch.StartNew();
                 try
                 {
-                    _logger.LogInformation("SignalR: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value})", 
-                        telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, ExtractValue(telemetryEvent.Value));
+                    eventCount++;
+                    _logger.LogInformation("SignalR: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}) [Total: {Count}]", 
+                        telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, ExtractValue(telemetryEvent.Value), eventCount);
                     
                     await BroadcastTelemetryEvent(telemetryEvent, stoppingToken);
                     
                     broadcastStopwatch.Stop();
                     var factoryIdStr = telemetryEvent.FactoryId.ToString();
-                    SignalRMetrics.RecordMessageSent(factoryIdStr, telemetryEvent.Tag, broadcastStopwatch.Elapsed);
+                    var lineId = MetricLabelHelper.ExtractLineId(telemetryEvent.SourceId);
+                    
+                    // Always log line_id extraction for debugging (use Information level to ensure it's visible)
+                    _logger.LogInformation("SignalR: Recording metric - FactoryId={FactoryId}, SourceId={SourceId}, ExtractedLineId={LineId}, Tag={Tag}", 
+                        factoryIdStr, telemetryEvent.SourceId, lineId, telemetryEvent.Tag);
+                    
+                    if (lineId == "unknown")
+                    {
+                        _logger.LogWarning("SignalR: Failed to extract line_id from SourceId={SourceId}, FactoryId={FactoryId}. SourceId format should be 'factory-lineN' (e.g., 'ulsan-line1')", 
+                            telemetryEvent.SourceId, factoryIdStr);
+                    }
+                    
+                    SignalRMetrics.RecordMessageSent(factoryIdStr, lineId, telemetryEvent.Tag, broadcastStopwatch.Elapsed);
                 }
                 catch (Exception ex)
                 {
                     broadcastStopwatch.Stop();
                     var factoryIdStr = telemetryEvent.FactoryId.ToString();
-                    SignalRMetrics.RecordSendError(factoryIdStr, telemetryEvent.Tag);
+                    var lineId = MetricLabelHelper.ExtractLineId(telemetryEvent.SourceId);
+                    SignalRMetrics.RecordSendError(factoryIdStr, lineId, telemetryEvent.Tag);
                     
                     _logger.LogError(ex, "Error broadcasting telemetry event {EventId}", telemetryEvent.EventId);
                 }
@@ -138,20 +179,28 @@ public class SignalRTelemetryService : BackgroundService
         };
 
         // Broadcast to all clients subscribed to this factory + tag combination
-        // Use consistent casing for FactoryId (convert to string first, then use as-is)
-        var factoryIdStr = telemetryEvent.FactoryId.ToString();
-        var groupName = $"{factoryIdStr}:{telemetryEvent.Tag}";
-        var specificGroupName = $"{factoryIdStr}:{telemetryEvent.Tag}:{telemetryEvent.SourceId}";
+        // Normalize factoryId, tag, and sourceId to lowercase for consistent group naming
+        var factoryIdStr = telemetryEvent.FactoryId.ToString().ToLowerInvariant();
+        var tagStr = telemetryEvent.Tag.ToLowerInvariant();
+        var groupName = $"{factoryIdStr}:{tagStr}";
         
-        _logger.LogInformation("Broadcasting to groups: {GroupName} and {SpecificGroupName} (FactoryId enum={FactoryId}, string={FactoryIdStr})", 
-            groupName, specificGroupName, telemetryEvent.FactoryId, factoryIdStr);
+        // Also broadcast to clients subscribed to specific sourceId (specific line)
+        string? specificGroupName = null;
+        if (!string.IsNullOrEmpty(telemetryEvent.SourceId))
+        {
+            var sourceIdStr = telemetryEvent.SourceId.ToLowerInvariant();
+            specificGroupName = $"{factoryIdStr}:{tagStr}:{sourceIdStr}";
+        }
+        
+        _logger.LogInformation("Broadcasting to groups: {GroupName} and {SpecificGroupName} (FactoryId enum={FactoryId}, string={FactoryIdStr}, Tag={Tag}, SourceId={SourceId})", 
+            groupName, specificGroupName ?? "none", telemetryEvent.FactoryId, factoryIdStr, tagStr, telemetryEvent.SourceId);
         
         // Broadcast to general group (factory + tag) - this receives ALL lines for this factory+tag
         await _hubContext.Clients.Group(groupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
         _logger.LogInformation("Sent to group {GroupName} (all lines)", groupName);
 
         // Also broadcast to clients subscribed to specific sourceId (specific line)
-        if (!string.IsNullOrEmpty(telemetryEvent.SourceId))
+        if (!string.IsNullOrEmpty(specificGroupName))
         {
             await _hubContext.Clients.Group(specificGroupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
             _logger.LogInformation("Sent to group {SpecificGroupName} (specific line)", specificGroupName);

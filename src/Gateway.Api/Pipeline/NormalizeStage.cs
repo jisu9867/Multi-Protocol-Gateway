@@ -123,16 +123,36 @@ public sealed class NormalizeStage : INormalize
         }
 
         // Extract factory_id from metadata or use default (Ulsan)
+        // Only allow Ulsan (1), Asan (2), Jeonju (3) - Hwaseong (4) is removed
         Factory factoryId = Factory.Ulsan;
         if (rawData.Metadata.TryGetValue("factory_id", out var factoryIdValue))
         {
             if (Enum.TryParse<Factory>(factoryIdValue, ignoreCase: true, out var parsedFactory))
             {
+                // Validate that parsed factory is one of the allowed values (1-3)
+                if (parsedFactory == Factory.Ulsan || parsedFactory == Factory.Asan || parsedFactory == Factory.Jeonju)
+            {
                 factoryId = parsedFactory;
+                }
+                else
+                {
+                    // Invalid factory (e.g., Hwaseong=4), use default
+                    factoryId = Factory.Ulsan;
+                }
             }
             else if (int.TryParse(factoryIdValue, out var factoryInt) && Enum.IsDefined(typeof(Factory), factoryInt))
             {
-                factoryId = (Factory)factoryInt;
+                var parsedFactoryFromInt = (Factory)factoryInt;
+                // Validate that parsed factory is one of the allowed values (1-3)
+                if (parsedFactoryFromInt == Factory.Ulsan || parsedFactoryFromInt == Factory.Asan || parsedFactoryFromInt == Factory.Jeonju)
+                {
+                    factoryId = parsedFactoryFromInt;
+                }
+                else
+                {
+                    // Invalid factory (e.g., Hwaseong=4), use default
+                    factoryId = Factory.Ulsan;
+                }
             }
         }
 

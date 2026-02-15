@@ -401,7 +401,7 @@ public class TelemetryDataService
             "factory-a" or "a" => FactoryEnum.Ulsan,
             "factory-b" or "b" => FactoryEnum.Asan,
             "factory-c" or "c" => FactoryEnum.Jeonju,
-            "factory-d" or "d" => FactoryEnum.Hwaseong,
+            // Hwaseong removed - not used in this project
             _ => null
         };
     }
@@ -413,7 +413,7 @@ public class TelemetryDataService
             FactoryEnum.Ulsan => "Factory A",
             FactoryEnum.Asan => "Factory B",
             FactoryEnum.Jeonju => "Factory C",
-            FactoryEnum.Hwaseong => "Factory D",
+            // Hwaseong removed - not used in this project
             _ => factory.ToString()
         };
     }
@@ -425,7 +425,7 @@ public class TelemetryDataService
             FactoryEnum.Ulsan => "Ulsan, Korea",
             FactoryEnum.Asan => "Asan, Korea",
             FactoryEnum.Jeonju => "Jeonju, Korea",
-            FactoryEnum.Hwaseong => "Hwaseong, Korea",
+            // Hwaseong removed - not used in this project
             _ => "Korea"
         };
     }

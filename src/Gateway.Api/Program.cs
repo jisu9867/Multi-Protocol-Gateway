@@ -208,7 +208,8 @@ builder.Services.AddSingleton<PostgreSqlSink>(sp =>
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
     var logger = sp.GetRequiredService<ILogger<PostgreSqlSink>>();
     var sinkOptions = sp.GetRequiredService<IOptions<SinkOptions>>();
-    return new PostgreSqlSink(scopeFactory, logger, sinkOptions);
+    var pipelineMetrics = sp.GetRequiredService<IPipelineMetrics>();
+    return new PostgreSqlSink(scopeFactory, logger, sinkOptions, pipelineMetrics);
 });
 builder.Services.AddSingleton<ISink>(sp => sp.GetRequiredService<PostgreSqlSink>());
 

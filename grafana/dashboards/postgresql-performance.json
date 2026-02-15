@@ -14,12 +14,12 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, http_server_request_duration_seconds_bucket{http_route=\"/api/events\"})",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "P95 Query Time",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, http_server_request_duration_seconds_bucket{http_route=\"/api/events\"})",
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "P99 Query Time",
           "refId": "B"
         }
@@ -36,7 +36,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "targets": [
         {
-          "expr": "rate(pipeline_persisted_total[5m])",
+          "expr": "sum(rate(pipeline_persisted_total[5m]))",
           "legendFormat": "Inserts/sec",
           "refId": "A"
         }
@@ -53,13 +53,13 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "targets": [
         {
-          "expr": "db_client_connections_active",
-          "legendFormat": "Active Connections",
+          "expr": "sum(rate(http_server_request_duration_seconds_count[5m]))",
+          "legendFormat": "API Requests/sec",
           "refId": "A"
         },
         {
-          "expr": "db_client_connections_idle",
-          "legendFormat": "Idle Connections",
+          "expr": "sum(rate(pipeline_persisted_total[5m]))",
+          "legendFormat": "DB Inserts/sec",
           "refId": "B"
         }
       ],
@@ -75,9 +75,14 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "targets": [
         {
-          "expr": "rate(http_server_request_duration_seconds_count{http_route=\"/api/events\",http_response_status_code=~\"5..\"}[5m])",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[5m]))",
           "legendFormat": "5xx Errors/sec",
           "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"4..\"}[5m]))",
+          "legendFormat": "4xx Errors/sec",
+          "refId": "B"
         }
       ],
       "yaxes": [

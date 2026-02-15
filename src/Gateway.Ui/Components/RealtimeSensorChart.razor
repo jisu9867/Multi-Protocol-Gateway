@@ -122,6 +122,12 @@
     private double _maxValue = 100;
     private DateTime? _lastUpdateTime;
     private const int MaxDataPoints = 10; // Keep last 10 points
+    
+    // Track current subscription to unsubscribe when parameters change
+    private string? _currentFactoryId;
+    private string? _currentTag;
+    private string? _currentSourceId;
+    private bool _isInitialized = false;
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,11 +142,13 @@
             Logger.LogInformation("Initializing real-time chart for sensor: {SensorId}, Type={SensorType}", Sensor.Id, Sensor.Type);
             
             // Extract factory ID and tag from sensor
-            var factoryId = FactoryId.ToString();
+            // Normalize factoryId to lowercase for consistent SignalR group naming
+            var factoryId = FactoryId.ToString().ToLowerInvariant();
             var tag = MapSensorTypeToTag(Sensor.Type);
             
             // Extract SourceId from Sensor.Id (format: {factory}-line{number} or just sourceId)
-            var sourceId = Sensor.Id;
+            // Normalize to lowercase for consistent SignalR group naming
+            var sourceId = Sensor.Id?.ToLowerInvariant() ?? "";
             
             Logger.LogInformation("Loading initial data for Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}", factoryId, tag, sourceId);
             
@@ -162,22 +170,99 @@
             }
 
             // Subscribe to specific sourceId for this factory and tag
-            Logger.LogInformation("Subscribing to: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}", 
-                factoryId, tag, sourceId);
+            Logger.LogInformation("Subscribing to SignalR: Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Sensor.Id={SensorId}", 
+                factoryId, tag, sourceId, Sensor?.Id);
 
             // Register callback for receiving events BEFORE subscribing
             SignalRService.OnReceiveTelemetryEvent(OnTelemetryEventReceived);
 
             // Subscribe to sensor updates for specific sourceId
+            // Group name will be: {factoryId}:{tag}:{sourceId} (all lowercase)
             await SignalRService.SubscribeToSensorAsync(factoryId, tag, sourceId);
+            Logger.LogInformation("SignalR subscription completed. Expected group name: {FactoryId}:{Tag}:{SourceId}", 
+                factoryId, tag, sourceId);
 
             Logger.LogInformation("Successfully subscribed to real-time sensor data");
+            
+            // Store current subscription info
+            _currentFactoryId = factoryId;
+            _currentTag = tag;
+            _currentSourceId = sourceId;
+            _isInitialized = true;
+            
             StateHasChanged();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error initializing real-time chart");
             _isConnected = false;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // If parameters changed and we were already initialized, unsubscribe from old and subscribe to new
+        if (_isInitialized && Sensor != null)
+        {
+            var newFactoryId = FactoryId.ToString().ToLowerInvariant();
+            var newTag = MapSensorTypeToTag(Sensor.Type).ToLowerInvariant();
+            var newSourceId = (Sensor.Id ?? "").ToLowerInvariant();
+            
+            // Check if parameters actually changed
+            if (_currentFactoryId != newFactoryId || _currentTag != newTag || _currentSourceId != newSourceId)
+            {
+                Logger.LogInformation("Parameters changed. Unsubscribing from old: Factory={OldFactory}, Tag={OldTag}, SourceId={OldSourceId}", 
+                    _currentFactoryId, _currentTag, _currentSourceId);
+                
+                // Unsubscribe from old subscription
+                if (!string.IsNullOrEmpty(_currentFactoryId) && !string.IsNullOrEmpty(_currentTag))
+                {
+                    await SignalRService.UnsubscribeFromSensorAsync(_currentFactoryId, _currentTag, _currentSourceId);
+                    Logger.LogInformation("Unsubscribed from old sensor: Factory={Factory}, Tag={Tag}, SourceId={SourceId}", 
+                        _currentFactoryId, _currentTag, _currentSourceId);
+                }
+                
+                // Clear old data
+                _dataPoints.Clear();
+                _seriesData.Clear();
+                _isConnected = false;
+                StateHasChanged();
+                
+                // Subscribe to new sensor
+                Logger.LogInformation("Subscribing to new sensor: Factory={NewFactory}, Tag={NewTag}, SourceId={NewSourceId}", 
+                    newFactoryId, newTag, newSourceId);
+                
+                // Load initial data for new sensor
+                await LoadInitialDataAsync(newFactoryId, newTag, newSourceId);
+                
+                // Ensure SignalR is connected
+                await SignalRService.StartAsync();
+                _isConnected = SignalRService.IsConnected;
+                
+                if (_isConnected)
+                {
+                    // Subscribe to new sensor
+                    await SignalRService.SubscribeToSensorAsync(newFactoryId, newTag, newSourceId);
+                    Logger.LogInformation("Subscribed to new sensor: Factory={Factory}, Tag={Tag}, SourceId={SourceId}", 
+                        newFactoryId, newTag, newSourceId);
+                    
+                    // Update current subscription info
+                    _currentFactoryId = newFactoryId;
+                    _currentTag = newTag;
+                    _currentSourceId = newSourceId;
+                    
+                    StateHasChanged();
+                }
+                else
+                {
+                    Logger.LogError("Failed to connect to SignalR for new sensor");
+                }
+            }
+        }
+        else if (!_isInitialized)
+        {
+            // First time initialization - handled by OnInitializedAsync
+            await base.OnParametersSetAsync();
         }
     }
 
@@ -317,31 +402,39 @@
                 Logger.LogInformation("Parsed {Count} events matching tag {Tag}", events.Count, tag);
                 
                 // Filter by sourceId to get only events for this specific sensor
+                // Get the most recent N events, sorted chronologically (oldest first)
                 var filteredEvents = events
                     .Where(e => e.SourceId.Equals(sourceId, StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(e => e.Timestamp)
-                    .Take(MaxDataPoints)
-                    .OrderBy(e => e.Timestamp) // Sort ascending for display
+                    .OrderByDescending(e => e.Timestamp) // Get most recent first
+                    .Take(MaxDataPoints) // Take only N most recent
+                    .OrderBy(e => e.Timestamp) // Sort ascending (oldest to newest) for display
                     .ToList();
                 
                 Logger.LogInformation("Filtered to {Count} events for SourceId={SourceId} (max {MaxPoints})", 
                     filteredEvents.Count, sourceId, MaxDataPoints);
                 
                 // Initialize series data for this specific sourceId
+                // Clear existing data and load exactly MaxDataPoints (or less if not enough data)
                 _seriesData.Clear();
                 _dataPoints.Clear();
                 
                 if (filteredEvents.Any())
                 {
+                    // Ensure we have at most MaxDataPoints
+                    var initialData = filteredEvents.Take(MaxDataPoints).ToList();
+                    
                     _seriesData[sourceId] = new SeriesData
                     {
                         SourceId = sourceId,
-                        EquipmentName = filteredEvents.First().EquipmentName,
+                        EquipmentName = initialData.First().EquipmentName,
                         Color = GetColorForSeries(0),
-                        DataPoints = filteredEvents
+                        DataPoints = initialData
                     };
                     
-                    _dataPoints = filteredEvents;
+                    _dataPoints = initialData;
+                    
+                    Logger.LogInformation("Initialized with {Count} historical data points (max: {MaxPoints})", 
+                        initialData.Count, MaxDataPoints);
                 }
                 
                 Logger.LogInformation("Loaded {Count} initial data points for SourceId={SourceId}", 
@@ -436,19 +529,24 @@
             eventDto.FactoryId, eventDto.Tag, eventDto.SourceId, eventDto.Value);
         
         // Filter by factory, tag, and sourceId
-        var tag = MapSensorTypeToTag(Sensor?.Type ?? "");
-        var expectedFactoryId = FactoryId.ToString();
-        var expectedSourceId = Sensor?.Id ?? "";
+        // Normalize to lowercase for consistent comparison
+        var tag = MapSensorTypeToTag(Sensor?.Type ?? "").ToLowerInvariant();
+        var expectedFactoryId = FactoryId.ToString().ToLowerInvariant();
+        var expectedSourceId = (Sensor?.Id ?? "").ToLowerInvariant();
+        
+        var eventFactoryId = eventDto.FactoryId.ToLowerInvariant();
+        var eventTag = eventDto.Tag.ToLowerInvariant();
+        var eventSourceId = eventDto.SourceId.ToLowerInvariant();
         
         // Check if this event matches our subscription
-        bool matchesFactory = eventDto.FactoryId.Equals(expectedFactoryId, StringComparison.OrdinalIgnoreCase);
-        bool matchesTag = eventDto.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase);
-        bool matchesSourceId = eventDto.SourceId.Equals(expectedSourceId, StringComparison.OrdinalIgnoreCase);
+        bool matchesFactory = eventFactoryId.Equals(expectedFactoryId, StringComparison.OrdinalIgnoreCase);
+        bool matchesTag = eventTag.Equals(tag, StringComparison.OrdinalIgnoreCase);
+        bool matchesSourceId = eventSourceId.Equals(expectedSourceId, StringComparison.OrdinalIgnoreCase);
         
         if (!matchesFactory || !matchesTag || !matchesSourceId)
         {
-            Logger.LogDebug("Event filtered out: Factory={MatchesFactory}, Tag={MatchesTag}, SourceId={MatchesSourceId} (Expected={ExpectedSourceId}, Got={GotSourceId})", 
-                matchesFactory, matchesTag, matchesSourceId, expectedSourceId, eventDto.SourceId);
+            Logger.LogWarning("Event filtered out: Factory={MatchesFactory}, Tag={MatchesTag}, SourceId={MatchesSourceId} (Expected Factory={ExpectedFactoryId}, Got={GotFactoryId}, Expected Tag={ExpectedTag}, Got={GotTag}, Expected SourceId={ExpectedSourceId}, Got={GotSourceId})", 
+                matchesFactory, matchesTag, matchesSourceId, expectedFactoryId, eventFactoryId, tag, eventTag, expectedSourceId, eventSourceId);
             return;
         }
 
@@ -457,8 +555,14 @@
 
         InvokeAsync(() =>
         {
-            // Group by SourceId for multiple lines
-            var key = eventDto.SourceId;
+            // Sliding window implementation:
+            // 1. Check for duplicates (by EventId or timestamp + sourceId)
+            // 2. If new event: remove oldest (front) and add newest (back)
+            // 3. Maintain exactly MaxDataPoints items
+            
+            var key = eventDto.SourceId.ToLowerInvariant();
+            
+            // Initialize series if needed
             if (!_seriesData.ContainsKey(key))
             {
                 _seriesData[key] = new SeriesData
@@ -470,69 +574,47 @@
                 };
             }
 
-            // Add new event to the series (append to existing data, don't replace)
-            // Check if this event already exists (by EventId or timestamp + sourceId) to avoid duplicates
-            var existingEvent = _seriesData[key].DataPoints.FirstOrDefault(p => 
-                (p.EventId != Guid.Empty && p.EventId == eventDto.EventId) ||
-                (p.Timestamp == eventDto.Timestamp && p.SourceId == eventDto.SourceId));
+            var series = _seriesData[key];
             
-            if (existingEvent == null)
+            // Check if this event already exists to avoid duplicates
+            var existingEvent = series.DataPoints.FirstOrDefault(p => 
+                (p.EventId != Guid.Empty && p.EventId == eventDto.EventId) ||
+                (p.Timestamp == eventDto.Timestamp && p.SourceId.Equals(eventDto.SourceId, StringComparison.OrdinalIgnoreCase)));
+            
+            if (existingEvent != null)
             {
-                // Add new event to the end of the list
-                _seriesData[key].DataPoints.Add(eventDto);
-                
-                // Sort by timestamp to maintain chronological order
-                _seriesData[key].DataPoints = _seriesData[key].DataPoints
-                    .OrderBy(e => e.Timestamp)
-                    .ToList();
-                
-                // Keep only last MaxDataPoints per series (FIFO: remove oldest if exceeds limit)
-                if (_seriesData[key].DataPoints.Count > MaxDataPoints)
-                {
-                    // Remove the oldest (first) data points
-                    var removeCount = _seriesData[key].DataPoints.Count - MaxDataPoints;
-                    _seriesData[key].DataPoints.RemoveRange(0, removeCount);
-                }
-            }
-            else
-            {
-                // Update existing event if needed
-                var index = _seriesData[key].DataPoints.IndexOf(existingEvent);
-                if (index >= 0)
-                {
-                    _seriesData[key].DataPoints[index] = eventDto;
-                }
+                Logger.LogDebug("Duplicate event detected, skipping: EventId={EventId}, Timestamp={Timestamp}", 
+                    eventDto.EventId, eventDto.Timestamp);
+                return;
             }
 
-            // Rebuild _dataPoints from all series (sorted by timestamp)
-            // Keep only the last MaxDataPoints across all series
-            _dataPoints.Clear();
-            foreach (var series in _seriesData.Values)
-            {
-                _dataPoints.AddRange(series.DataPoints);
-            }
-            _dataPoints = _dataPoints
+            // Sliding window: Add new event to the end (back)
+            series.DataPoints.Add(eventDto);
+            
+            // Sort by timestamp to maintain chronological order (oldest to newest)
+            series.DataPoints = series.DataPoints
                 .OrderBy(e => e.Timestamp)
                 .ToList();
             
-            // Keep only last MaxDataPoints across all series
-            if (_dataPoints.Count > MaxDataPoints)
+            // Remove oldest events from front if exceeds MaxDataPoints
+            if (series.DataPoints.Count > MaxDataPoints)
             {
-                var removeCount = _dataPoints.Count - MaxDataPoints;
-                _dataPoints.RemoveRange(0, removeCount);
-                
-                // Also update each series to remove old data points
-                foreach (var series in _seriesData.Values)
-                {
-                    var oldestTimestamp = _dataPoints.First().Timestamp;
-                    series.DataPoints.RemoveAll(p => p.Timestamp < oldestTimestamp);
-                }
+                var removeCount = series.DataPoints.Count - MaxDataPoints;
+                series.DataPoints.RemoveRange(0, removeCount); // Remove from front (oldest)
+                Logger.LogDebug("Removed {Count} oldest data points, keeping {Remaining} points", 
+                    removeCount, series.DataPoints.Count);
             }
 
-            // Update min/max values
+            // Rebuild _dataPoints from series (for single sourceId, this is the same as series.DataPoints)
+            _dataPoints = series.DataPoints.ToList();
+
+            // Update min/max values for chart scaling
             UpdateMinMax();
 
             _lastUpdateTime = DateTime.Now;
+            Logger.LogInformation("Updated chart: {Count} data points (newest: {Value} at {Timestamp})", 
+                _dataPoints.Count, eventDto.Value, eventDto.Timestamp);
+            
             StateHasChanged();
         });
     }
@@ -665,7 +747,8 @@
     {
         if (Sensor != null)
         {
-            var factoryId = FactoryId.ToString();
+            // Normalize factoryId to lowercase for consistent SignalR group naming
+            var factoryId = FactoryId.ToString().ToLowerInvariant();
             var tag = MapSensorTypeToTag(Sensor.Type);
             var sourceId = Sensor.Id;
             await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, sourceId);
@@ -678,7 +761,8 @@
     {
         if (Sensor != null)
         {
-            var factoryId = FactoryId.ToString();
+            // Normalize factoryId to lowercase for consistent SignalR group naming
+            var factoryId = FactoryId.ToString().ToLowerInvariant();
             var tag = MapSensorTypeToTag(Sensor.Type);
             var sourceId = Sensor.Id;
             await SignalRService.UnsubscribeFromSensorAsync(factoryId, tag, sourceId);

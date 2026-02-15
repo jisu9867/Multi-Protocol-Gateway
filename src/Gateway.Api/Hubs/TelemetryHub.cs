@@ -52,11 +52,16 @@ public class TelemetryHub : Hub
 
     private static string GetGroupName(string factoryId, string tag, string? sourceId)
     {
+        // Normalize factoryId and sourceId to lowercase for consistent group naming
+        var normalizedFactoryId = factoryId?.ToLowerInvariant() ?? "";
+        var normalizedTag = tag?.ToLowerInvariant() ?? "";
+        
         if (!string.IsNullOrEmpty(sourceId))
         {
-            return $"{factoryId}:{tag}:{sourceId}";
+            var normalizedSourceId = sourceId.ToLowerInvariant();
+            return $"{normalizedFactoryId}:{normalizedTag}:{normalizedSourceId}";
         }
-        return $"{factoryId}:{tag}";
+        return $"{normalizedFactoryId}:{normalizedTag}";
     }
 }
 

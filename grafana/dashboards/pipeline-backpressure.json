@@ -49,13 +49,13 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, pipeline_processing_duration_seconds_bucket)",
-          "legendFormat": "P95",
+          "expr": "histogram_quantile(0.95, sum(rate(pipeline_processing_duration_seconds_bucket[5m])) by (le, stage))",
+          "legendFormat": "P95 - {{stage}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, pipeline_processing_duration_seconds_bucket)",
-          "legendFormat": "P99",
+          "expr": "histogram_quantile(0.99, sum(rate(pipeline_processing_duration_seconds_bucket[5m])) by (le, stage))",
+          "legendFormat": "P99 - {{stage}}",
           "refId": "B"
         }
       ],
@@ -71,7 +71,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "targets": [
         {
-          "expr": "rate(pipeline_dropped_total[5m])",
+          "expr": "sum(rate(pipeline_dropped_total[5m]))",
           "legendFormat": "Dropped",
           "refId": "A"
         }
@@ -88,22 +88,22 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "targets": [
         {
-          "expr": "rate(pipeline_ingested_total[5m])",
+          "expr": "sum(rate(pipeline_ingested_total[5m]))",
           "legendFormat": "Ingested",
           "refId": "A"
         },
         {
-          "expr": "rate(pipeline_normalized_total[5m])",
+          "expr": "sum(rate(pipeline_normalized_total[5m]))",
           "legendFormat": "Normalized",
           "refId": "B"
         },
         {
-          "expr": "rate(pipeline_routed_total[5m])",
+          "expr": "sum(rate(pipeline_routed_total[5m]))",
           "legendFormat": "Routed",
           "refId": "C"
         },
         {
-          "expr": "rate(pipeline_persisted_total[5m])",
+          "expr": "sum(rate(pipeline_persisted_total[5m]))",
           "legendFormat": "Persisted",
           "refId": "D"
         }

@@ -28,15 +28,14 @@ public class SignalRKafkaConsumerHostedService : BackgroundService
     {
         _logger.LogInformation("SignalRKafkaConsumerHostedService: Starting SignalR Kafka Consumer...");
         
-        // Manually start the consumer's ExecuteAsync
-        // Since the consumer is a BackgroundService but registered as a KeyedService singleton,
-        // it won't be automatically started by the HostedService infrastructure
-        // We'll use reflection to call the protected ExecuteAsync method
+        // Since KafkaConsumer is a BackgroundService registered as KeyedService,
+        // we need to manually call its ExecuteAsync method using reflection
+        // BackgroundService.StartAsync would create a new task, but we want to run it in this context
         try
         {
             _logger.LogInformation("SignalRKafkaConsumerHostedService: Calling consumer.ExecuteAsync via reflection...");
             
-            // Get the ExecuteAsync method using reflection
+            // Get the protected ExecuteAsync method using reflection
             var executeAsyncMethod = typeof(KafkaConsumer).GetMethod("ExecuteAsync", 
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             
@@ -44,12 +43,19 @@ public class SignalRKafkaConsumerHostedService : BackgroundService
             {
                 _logger.LogInformation("SignalRKafkaConsumerHostedService: Found ExecuteAsync method, invoking...");
                 var task = (Task)executeAsyncMethod.Invoke(_consumer, new object[] { stoppingToken })!;
-                await task;
+                await task.ConfigureAwait(false);
+                _logger.LogInformation("SignalRKafkaConsumerHostedService: Consumer.ExecuteAsync completed");
             }
             else
             {
                 _logger.LogError("SignalRKafkaConsumerHostedService: Failed to find ExecuteAsync method on KafkaConsumer");
+                throw new InvalidOperationException("Failed to find ExecuteAsync method on KafkaConsumer");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during shutdown
+            _logger.LogInformation("SignalRKafkaConsumerHostedService: Cancellation requested");
         }
         catch (Exception ex)
         {

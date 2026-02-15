@@ -18,11 +18,9 @@ public enum Factory
     /// <summary>
     /// Jeonju factory
     /// </summary>
-    Jeonju = 3,
+    Jeonju = 3
 
-    /// <summary>
-    /// Hwaseong factory
-    /// </summary>
-    Hwaseong = 4
+    // Hwaseong factory removed - not used in this project
+    // Only Ulsan, Asan, Jeonju are used
 }
 
