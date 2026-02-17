@@ -1,36 +1,65 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using Prometheus;
+using System.Diagnostics.Metrics;
 
 namespace Gateway.Infrastructure.Observability;
 
 /// <summary>
-/// SignalR-specific metrics exporter
+/// SignalR-specific metrics exporter using OpenTelemetry Meter
 /// Tracks real-time message broadcasting metrics
 /// Supports factory_id + line_id granularity for monitoring
 /// </summary>
 public sealed class SignalRMetrics
 {
+    private static readonly Meter Meter = new("Gateway.SignalR", "1.0.0");
+    
     // Counter: Total messages sent (with factory_id, line_id, tag, status)
-    private static readonly Counter SignalRMessagesSentTotal = Metrics.CreateCounter(
+    private static readonly Counter<long> SignalRMessagesSentTotal = Meter.CreateCounter<long>(
         "signalr_messages_sent_total",
-        "Total number of SignalR messages sent",
-        new[] { "factory_id", "line_id", "tag", "status" }); // status: success, error
+        "messages",
+        "Total number of SignalR messages sent");
 
     // Histogram: Send latency (with factory_id, line_id, tag)
-    private static readonly Histogram SignalRSendLatency = Metrics.CreateHistogram(
+    private static readonly Histogram<double> SignalRSendLatency = Meter.CreateHistogram<double>(
         "signalr_send_latency_seconds",
-        "SignalR message send latency in seconds",
-        new[] { "factory_id", "line_id", "tag" },
-        new HistogramConfiguration
-        {
-            Buckets = new[] { 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0 }
-        });
+        "seconds",
+        "SignalR message send latency in seconds");
 
-    // Gauge: Connected clients (with factory_id, line_id, tag)
-    private static readonly Gauge SignalRConnectedClients = Metrics.CreateGauge(
-        "signalr_connected_clients",
-        "Number of connected SignalR clients",
-        new[] { "factory_id", "line_id", "tag" });
+    // Store current client counts for ObservableGauge
+    private static readonly ConcurrentDictionary<string, long> _connectedClients = new();
+
+    static SignalRMetrics()
+    {
+        // Register observable gauge for connected clients
+        Meter.CreateObservableGauge(
+            "signalr_connected_clients",
+            GetConnectedClientsMeasurements,
+            "clients",
+            "Number of connected SignalR clients");
+    }
+
+    private static IEnumerable<Measurement<long>> GetConnectedClientsMeasurements()
+    {
+        foreach (var kvp in _connectedClients)
+        {
+            var parts = kvp.Key.Split(':');
+            if (parts.Length == 3)
+            {
+                var factoryId = parts[0];
+                var lineId = parts[1];
+                var tag = parts[2];
+                
+                yield return new Measurement<long>(
+                    kvp.Value,
+                    new TagList
+                    {
+                        { "factory_id", factoryId },
+                        { "line_id", lineId },
+                        { "tag", tag }
+                    });
+            }
+        }
+    }
 
     /// <summary>
     /// Record a successfully sent SignalR message
@@ -54,8 +83,30 @@ public sealed class SignalRMetrics
         }
 
         // Record metric with all labels including line_id
-        SignalRMessagesSentTotal.WithLabels(safeFactoryId, safeLineId, safeTag, "success").Inc();
-        SignalRSendLatency.WithLabels(safeFactoryId, safeLineId, safeTag).Observe(duration.TotalSeconds);
+        var tags = new TagList
+        {
+            { "factory_id", safeFactoryId },
+            { "line_id", safeLineId },
+            { "tag", safeTag },
+            { "status", "success" }
+        };
+        try
+        {
+            SignalRMessagesSentTotal.Add(1, tags);
+            
+            var latencyTags = new TagList
+            {
+                { "factory_id", safeFactoryId },
+                { "line_id", safeLineId },
+                { "tag", safeTag }
+            };
+            SignalRSendLatency.Record(duration.TotalSeconds, latencyTags);
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't throw - metrics recording should not break the application
+            System.Diagnostics.Debug.WriteLine($"SignalRMetrics.RecordMessageSent error: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -71,7 +122,14 @@ public sealed class SignalRMetrics
         var safeLineId = MetricLabelHelper.SanitizeLabelValue(lineId);
         var safeTag = MetricLabelHelper.SanitizeLabelValue(tag);
 
-        SignalRMessagesSentTotal.WithLabels(safeFactoryId, safeLineId, safeTag, "error").Inc();
+        var tags = new TagList
+        {
+            { "factory_id", safeFactoryId },
+            { "line_id", safeLineId },
+            { "tag", safeTag },
+            { "status", "error" }
+        };
+        SignalRMessagesSentTotal.Add(1, tags);
     }
 
     /// <summary>
@@ -88,7 +146,90 @@ public sealed class SignalRMetrics
         var safeLineId = MetricLabelHelper.SanitizeLabelValue(lineId);
         var safeTag = MetricLabelHelper.SanitizeLabelValue(tag);
 
-        SignalRConnectedClients.WithLabels(safeFactoryId, safeLineId, safeTag).Set(count);
+        // Store current value for ObservableGauge
+        var key = $"{safeFactoryId}:{safeLineId}:{safeTag}";
+        _connectedClients.AddOrUpdate(key, count, (k, v) => count);
+    }
+
+    /// <summary>
+    /// Initialize SignalR metrics with dummy values to ensure they are always visible in Prometheus
+    /// This should be called during application startup
+    /// Note: OTel Counters are only exposed when they have been incremented, so we initialize with 1
+    /// </summary>
+    public static void InitializeMetrics()
+    {
+        var factories = new[] { "ulsan", "asan", "jeonju" };
+        var lines = new[] { "line1", "line2", "line3" };
+        var tags = new[] { "temp", "humidity", "pressure", "vibration", "power", "flow" };
+
+        foreach (var factory in factories)
+        {
+            foreach (var line in lines)
+            {
+                foreach (var tag in tags)
+                {
+                    // Initialize counters with 1 to ensure visibility (will be incremented when real messages are sent)
+                    // OTel Counters are only exposed when they have been incremented
+                    var successTags = new TagList
+                    {
+                        { "factory_id", factory },
+                        { "line_id", line },
+                        { "tag", tag },
+                        { "status", "success" }
+                    };
+                    SignalRMessagesSentTotal.Add(1, successTags);
+
+                    var errorTags = new TagList
+                    {
+                        { "factory_id", factory },
+                        { "line_id", line },
+                        { "tag", tag },
+                        { "status", "error" }
+                    };
+                    SignalRMessagesSentTotal.Add(1, errorTags);
+
+                    // Initialize histogram with a very small value to ensure visibility
+                    var latencyTags = new TagList
+                    {
+                        { "factory_id", factory },
+                        { "line_id", line },
+                        { "tag", tag }
+                    };
+                    SignalRSendLatency.Record(0.0001, latencyTags);
+
+                    // Initialize connected clients gauge
+                    UpdateConnectedClients(factory, line, tag, 0);
+                }
+            }
+        }
+
+        // Also initialize "unknown" combinations
+        var unknownSuccessTags = new TagList
+        {
+            { "factory_id", "unknown" },
+            { "line_id", "unknown" },
+            { "tag", "unknown" },
+            { "status", "success" }
+        };
+        SignalRMessagesSentTotal.Add(1, unknownSuccessTags);
+
+        var unknownErrorTags = new TagList
+        {
+            { "factory_id", "unknown" },
+            { "line_id", "unknown" },
+            { "tag", "unknown" },
+            { "status", "error" }
+        };
+        SignalRMessagesSentTotal.Add(1, unknownErrorTags);
+
+        var unknownLatencyTags = new TagList
+        {
+            { "factory_id", "unknown" },
+            { "line_id", "unknown" },
+            { "tag", "unknown" }
+        };
+        SignalRSendLatency.Record(0.0001, unknownLatencyTags);
+        UpdateConnectedClients("unknown", "unknown", "unknown", 0);
     }
 
     // Legacy methods for backward compatibility (will extract line_id as "unknown")
@@ -110,4 +251,3 @@ public sealed class SignalRMetrics
         UpdateConnectedClients(factoryId, "unknown", tag, count);
     }
 }
-

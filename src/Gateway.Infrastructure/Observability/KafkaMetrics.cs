@@ -1,51 +1,57 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Gateway.Core.Models;
 using Microsoft.Extensions.Logging;
-using Prometheus;
 
 namespace Gateway.Infrastructure.Observability;
 
 /// <summary>
-/// Kafka-specific metrics exporter
+/// Kafka-specific metrics exporter using OpenTelemetry Meter
 /// Tracks message processing rates and latencies
 /// </summary>
 public sealed class KafkaMetrics
 {
-    private static readonly Counter KafkaMessagesProcessedTotal = Metrics.CreateCounter(
+    private static readonly Meter Meter = new("Gateway.Kafka", "1.0.0");
+    
+    private static readonly Counter<long> KafkaMessagesProcessedTotal = Meter.CreateCounter<long>(
         "kafka_messages_processed_total",
-        "Total number of Kafka messages processed",
-        new[] { "consumer_group", "topic", "status" }); // status: success, error
+        "messages",
+        "Total number of Kafka messages processed");
 
-    private static readonly Histogram KafkaProcessingDuration = Metrics.CreateHistogram(
+    private static readonly Histogram<double> KafkaProcessingDuration = Meter.CreateHistogram<double>(
         "kafka_processing_duration_seconds",
-        "Kafka message processing duration in seconds",
-        new[] { "consumer_group", "topic" },
-        new HistogramConfiguration
-        {
-            Buckets = new[] { 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0 }
-        });
+        "seconds",
+        "Kafka message processing duration in seconds");
 
-    private static readonly Counter KafkaProducerMessagesTotal = Metrics.CreateCounter(
+    private static readonly Counter<long> KafkaProducerMessagesTotal = Meter.CreateCounter<long>(
         "kafka_producer_messages_total",
-        "Total number of messages produced to Kafka",
-        new[] { "topic", "status" }); // status: success, error
+        "messages",
+        "Total number of messages produced to Kafka");
 
-    private static readonly Histogram KafkaProducerDuration = Metrics.CreateHistogram(
+    private static readonly Histogram<double> KafkaProducerDuration = Meter.CreateHistogram<double>(
         "kafka_producer_duration_seconds",
-        "Kafka producer send duration in seconds",
-        new[] { "topic" },
-        new HistogramConfiguration
-        {
-            Buckets = new[] { 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0 }
-        });
+        "seconds",
+        "Kafka producer send duration in seconds");
 
     /// <summary>
     /// Record a successfully processed Kafka message
     /// </summary>
     public static void RecordMessageProcessed(string consumerGroup, string topic, TimeSpan duration)
     {
-        KafkaMessagesProcessedTotal.WithLabels(consumerGroup, topic, "success").Inc();
-        KafkaProcessingDuration.WithLabels(consumerGroup, topic).Observe(duration.TotalSeconds);
+        var tags = new TagList
+        {
+            { "consumer_group", consumerGroup },
+            { "topic", topic },
+            { "status", "success" }
+        };
+        KafkaMessagesProcessedTotal.Add(1, tags);
+        
+        var latencyTags = new TagList
+        {
+            { "consumer_group", consumerGroup },
+            { "topic", topic }
+        };
+        KafkaProcessingDuration.Record(duration.TotalSeconds, latencyTags);
     }
 
     /// <summary>
@@ -53,7 +59,13 @@ public sealed class KafkaMetrics
     /// </summary>
     public static void RecordMessageError(string consumerGroup, string topic)
     {
-        KafkaMessagesProcessedTotal.WithLabels(consumerGroup, topic, "error").Inc();
+        var tags = new TagList
+        {
+            { "consumer_group", consumerGroup },
+            { "topic", topic },
+            { "status", "error" }
+        };
+        KafkaMessagesProcessedTotal.Add(1, tags);
     }
 
     /// <summary>
@@ -61,8 +73,18 @@ public sealed class KafkaMetrics
     /// </summary>
     public static void RecordMessageProduced(string topic, TimeSpan duration)
     {
-        KafkaProducerMessagesTotal.WithLabels(topic, "success").Inc();
-        KafkaProducerDuration.WithLabels(topic).Observe(duration.TotalSeconds);
+        var tags = new TagList
+        {
+            { "topic", topic },
+            { "status", "success" }
+        };
+        KafkaProducerMessagesTotal.Add(1, tags);
+        
+        var latencyTags = new TagList
+        {
+            { "topic", topic }
+        };
+        KafkaProducerDuration.Record(duration.TotalSeconds, latencyTags);
     }
 
     /// <summary>
@@ -70,7 +92,11 @@ public sealed class KafkaMetrics
     /// </summary>
     public static void RecordProduceError(string topic)
     {
-        KafkaProducerMessagesTotal.WithLabels(topic, "error").Inc();
+        var tags = new TagList
+        {
+            { "topic", topic },
+            { "status", "error" }
+        };
+        KafkaProducerMessagesTotal.Add(1, tags);
     }
 }
-

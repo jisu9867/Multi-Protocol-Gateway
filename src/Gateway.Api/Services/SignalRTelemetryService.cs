@@ -115,7 +115,8 @@ public class SignalRTelemetryService : BackgroundService
                     await BroadcastTelemetryEvent(telemetryEvent, stoppingToken);
                     
                     broadcastStopwatch.Stop();
-                    var factoryIdStr = telemetryEvent.FactoryId.ToString();
+                    // Normalize factory ID to lowercase for consistent metric labels
+                    var factoryIdStr = telemetryEvent.FactoryId.ToString().ToLowerInvariant();
                     var lineId = MetricLabelHelper.ExtractLineId(telemetryEvent.SourceId);
                     
                     // Always log line_id extraction for debugging (use Information level to ensure it's visible)
@@ -128,12 +129,14 @@ public class SignalRTelemetryService : BackgroundService
                             telemetryEvent.SourceId, factoryIdStr);
                     }
                     
+                    // Always record metric, even if line_id is unknown (to ensure metrics are visible in Grafana)
                     SignalRMetrics.RecordMessageSent(factoryIdStr, lineId, telemetryEvent.Tag, broadcastStopwatch.Elapsed);
                 }
                 catch (Exception ex)
                 {
                     broadcastStopwatch.Stop();
-                    var factoryIdStr = telemetryEvent.FactoryId.ToString();
+                    // Normalize factory ID to lowercase for consistent metric labels
+                    var factoryIdStr = telemetryEvent.FactoryId.ToString().ToLowerInvariant();
                     var lineId = MetricLabelHelper.ExtractLineId(telemetryEvent.SourceId);
                     SignalRMetrics.RecordSendError(factoryIdStr, lineId, telemetryEvent.Tag);
                     

@@ -22,7 +22,6 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Logs;
-using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -86,6 +85,12 @@ builder.Services.AddOpenTelemetry()
         .AddMeter("Microsoft.AspNetCore.Hosting")
         .AddMeter("Microsoft.AspNetCore.Http")
         .AddMeter("System.Net.Http")
+        // Register custom metric meters
+        .AddMeter("Gateway.SignalR")
+        .AddMeter("Gateway.Kafka")
+        .AddMeter("Gateway.Kafka.Lag")
+        .AddMeter("Gateway.Pipeline")
+        .AddMeter("Gateway.MQTT")
         .AddPrometheusExporter() // Expose Prometheus metrics endpoint
     );
 
@@ -372,8 +377,13 @@ var app = builder.Build();
 var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
 appLogger.LogInformation("Application built. All hosted services should be starting now.");
 
+// Initialize SignalR metrics to ensure they are always visible in Prometheus
+SignalRMetrics.InitializeMetrics();
+appLogger.LogInformation("SignalR metrics initialized");
+
 // Prometheus metrics are available via OpenTelemetry Prometheus exporter at /metrics endpoint
 appLogger.LogInformation("OpenTelemetry Prometheus exporter available at /metrics endpoint");
+appLogger.LogInformation("Custom metrics (SignalR, Kafka, Pipeline, MQTT) are registered via OTel Meter");
 
 // Configure the HTTP request pipeline
 
@@ -388,15 +398,38 @@ app.UseAuthorization();
 // UseOpenTelemetryPrometheusScrapingEndpoint() registers middleware that handles GET /metrics requests
 // and returns Prometheus text format (text/plain), not JSON
 // Note: This must be called BEFORE any MapGet("/metrics") or MapControllers() to take precedence
+// All metrics (standard + custom) are now exposed via this single endpoint
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
-// prometheus-net metrics endpoint (for custom metrics like pipeline_*, kafka_*, signalr_*)
-// This endpoint exposes prometheus-net metrics that are not captured by OpenTelemetry
-app.MapGet("/metrics-net", async (HttpContext context) =>
+// Test endpoint to verify metrics are being recorded
+app.MapGet("/test-metrics", (ILogger<Program> logger) =>
 {
-    context.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
-    await using var writer = new StreamWriter(context.Response.Body);
-    await Metrics.DefaultRegistry.CollectAndExportAsTextAsync(writer.BaseStream);
+    try
+    {
+        logger.LogInformation("Recording test metrics...");
+        
+        // Force record some test metrics to verify they appear
+        SignalRMetrics.RecordMessageSent("ulsan", "line1", "temp", TimeSpan.FromMilliseconds(10));
+        SignalRMetrics.RecordMessageSent("asan", "line2", "humidity", TimeSpan.FromMilliseconds(15));
+        SignalRMetrics.RecordMessageSent("jeonju", "line3", "pressure", TimeSpan.FromMilliseconds(20));
+        
+        KafkaMetrics.RecordMessageProcessed("test-group", "test-topic", TimeSpan.FromMilliseconds(5));
+        KafkaMetrics.RecordMessageProduced("test-topic", TimeSpan.FromMilliseconds(3));
+        
+        MqttMetrics.RecordMessageIngested("test/topic", TimeSpan.FromMilliseconds(8));
+        
+        logger.LogInformation("Test metrics recorded successfully");
+        
+        return Results.Ok(new { 
+            message = "Test metrics recorded. Check /metrics endpoint.",
+            timestamp = DateTime.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error recording test metrics");
+        return Results.Problem($"Error: {ex.Message}");
+    }
 });
 
 // Health endpoint - using custom HealthController for detailed status

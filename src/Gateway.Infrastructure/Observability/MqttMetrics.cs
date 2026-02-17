@@ -1,35 +1,43 @@
 using System.Diagnostics;
-using Prometheus;
+using System.Diagnostics.Metrics;
 
 namespace Gateway.Infrastructure.Observability;
 
 /// <summary>
-/// MQTT-specific metrics exporter
+/// MQTT-specific metrics exporter using OpenTelemetry Meter
 /// Tracks message ingestion latency from MQTT adapter
 /// </summary>
 public sealed class MqttMetrics
 {
-    private static readonly Counter MqttMessagesIngestedTotal = Metrics.CreateCounter(
+    private static readonly Meter Meter = new("Gateway.MQTT", "1.0.0");
+    
+    private static readonly Counter<long> MqttMessagesIngestedTotal = Meter.CreateCounter<long>(
         "mqtt_messages_ingested_total",
-        "Total number of MQTT messages ingested",
-        new[] { "topic", "status" }); // status: success, error
+        "messages",
+        "Total number of MQTT messages ingested");
 
-    private static readonly Histogram MqttIngestLatency = Metrics.CreateHistogram(
+    private static readonly Histogram<double> MqttIngestLatency = Meter.CreateHistogram<double>(
         "mqtt_ingest_latency_seconds",
-        "MQTT message ingestion latency in seconds (from receive to pipeline)",
-        new[] { "topic" },
-        new HistogramConfiguration
-        {
-            Buckets = new[] { 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0 }
-        });
+        "seconds",
+        "MQTT message ingestion latency in seconds (from receive to pipeline)");
 
     /// <summary>
     /// Record a successfully ingested MQTT message
     /// </summary>
     public static void RecordMessageIngested(string topic, TimeSpan latency)
     {
-        MqttMessagesIngestedTotal.WithLabels(topic, "success").Inc();
-        MqttIngestLatency.WithLabels(topic).Observe(latency.TotalSeconds);
+        var tags = new TagList
+        {
+            { "topic", topic },
+            { "status", "success" }
+        };
+        MqttMessagesIngestedTotal.Add(1, tags);
+        
+        var latencyTags = new TagList
+        {
+            { "topic", topic }
+        };
+        MqttIngestLatency.Record(latency.TotalSeconds, latencyTags);
     }
 
     /// <summary>
@@ -37,7 +45,11 @@ public sealed class MqttMetrics
     /// </summary>
     public static void RecordIngestError(string topic)
     {
-        MqttMessagesIngestedTotal.WithLabels(topic, "error").Inc();
+        var tags = new TagList
+        {
+            { "topic", topic },
+            { "status", "error" }
+        };
+        MqttMessagesIngestedTotal.Add(1, tags);
     }
 }
-

@@ -1,15 +1,16 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Confluent.Kafka;
 using Gateway.Infrastructure.Configuration;
 using Gateway.Infrastructure.Kafka;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Prometheus;
 
 namespace Gateway.Infrastructure.Observability;
 
 /// <summary>
-/// Kafka Consumer Lag metrics collector
+/// Kafka Consumer Lag metrics collector using OpenTelemetry Meter
 /// Calculates lag by comparing high watermark (latest offset) with consumer group committed offset
 /// </summary>
 public sealed class KafkaLagMetrics : IDisposable
@@ -19,21 +20,12 @@ public sealed class KafkaLagMetrics : IDisposable
     private readonly Timer _updateTimer;
     private readonly ConcurrentDictionary<string, ConsumerGroupLagInfo> _lagInfo = new();
     
-    // Prometheus metrics
-    private static readonly Gauge KafkaConsumerLag = Metrics.CreateGauge(
-        "kafka_consumer_lag",
-        "Kafka consumer lag (high watermark - committed offset) per consumer group and partition",
-        new[] { "consumer_group", "topic", "partition" });
-    
-    private static readonly Gauge KafkaConsumerCommittedOffset = Metrics.CreateGauge(
-        "kafka_consumer_committed_offset",
-        "Committed offset per consumer group, topic, and partition",
-        new[] { "consumer_group", "topic", "partition" });
-    
-    private static readonly Gauge KafkaConsumerHighWatermark = Metrics.CreateGauge(
-        "kafka_consumer_high_watermark",
-        "High watermark (latest available offset) per topic and partition",
-        new[] { "topic", "partition" });
+    private static readonly Meter Meter = new("Gateway.Kafka.Lag", "1.0.0");
+
+    // Store current metric values for ObservableGauge
+    private readonly ConcurrentDictionary<string, long> _lagValues = new();
+    private readonly ConcurrentDictionary<string, long> _committedOffsetValues = new();
+    private readonly ConcurrentDictionary<string, long> _highWatermarkValues = new();
 
     public KafkaLagMetrics(
         ILogger<KafkaLagMetrics> logger,
@@ -41,6 +33,11 @@ public sealed class KafkaLagMetrics : IDisposable
     {
         _logger = logger;
         _options = kafkaOptions.Value;
+        
+        // Register observable gauges with measurement callbacks
+        Meter.CreateObservableGauge("kafka_consumer_lag", GetLagMeasurements, "messages", "Kafka consumer lag");
+        Meter.CreateObservableGauge("kafka_consumer_committed_offset", GetCommittedOffsetMeasurements, "offset", "Committed offset");
+        Meter.CreateObservableGauge("kafka_consumer_high_watermark", GetHighWatermarkMeasurements, "offset", "High watermark");
         
         // Update lag metrics every 10 seconds
         _updateTimer = new Timer(UpdateLagMetrics, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -118,7 +115,8 @@ public sealed class KafkaLagMetrics : IDisposable
                         TimeSpan.FromSeconds(5));
                     
                     var highWatermark = watermark.High.Value;
-                    KafkaConsumerHighWatermark.WithLabels(topic, partition.PartitionId.ToString()).Set(highWatermark);
+                    var highWatermarkKey = $"{topic}:{partition.PartitionId}";
+                    _highWatermarkValues.AddOrUpdate(highWatermarkKey, highWatermark, (k, v) => highWatermark);
 
                     // Get committed offset for consumer group
                     var committedOffsets = consumerForWatermark.Committed(
@@ -129,12 +127,14 @@ public sealed class KafkaLagMetrics : IDisposable
                     if (committedOffset != null)
                     {
                         var offset = committedOffset.Offset.Value;
-                        KafkaConsumerCommittedOffset.WithLabels(consumerGroupId, topic, partition.PartitionId.ToString()).Set(offset);
+                        var committedOffsetKey = $"{consumerGroupId}:{topic}:{partition.PartitionId}";
+                        _committedOffsetValues.AddOrUpdate(committedOffsetKey, offset, (k, v) => offset);
 
                         // Calculate lag: high watermark - committed offset
                         // Note: If committed offset is -1 (no commit yet), lag = high watermark
                         var lag = offset >= 0 ? highWatermark - offset : highWatermark;
-                        KafkaConsumerLag.WithLabels(consumerGroupId, topic, partition.PartitionId.ToString()).Set(lag);
+                        var lagKey = $"{consumerGroupId}:{topic}:{partition.PartitionId}";
+                        _lagValues.AddOrUpdate(lagKey, lag, (k, v) => lag);
 
                         _logger.LogDebug(
                             "Consumer Group {GroupId}, Topic {Topic}, Partition {Partition}: " +
@@ -144,7 +144,8 @@ public sealed class KafkaLagMetrics : IDisposable
                     else
                     {
                         // No committed offset yet - lag equals high watermark
-                        KafkaConsumerLag.WithLabels(consumerGroupId, topic, partition.PartitionId.ToString()).Set(highWatermark);
+                        var lagKey = $"{consumerGroupId}:{topic}:{partition.PartitionId}";
+                        _lagValues.AddOrUpdate(lagKey, highWatermark, (k, v) => highWatermark);
                         _logger.LogDebug(
                             "Consumer Group {GroupId}, Topic {Topic}, Partition {Partition}: " +
                             "No committed offset, Lag={Lag} (equals high watermark)",
@@ -164,6 +165,73 @@ public sealed class KafkaLagMetrics : IDisposable
             _logger.LogError(ex, 
                 "Failed to update lag metrics for Consumer Group {GroupId}, Topic {Topic}",
                 consumerGroupId, topic);
+        }
+    }
+
+    private IEnumerable<Measurement<long>> GetLagMeasurements()
+    {
+        foreach (var kvp in _lagValues)
+        {
+            var parts = kvp.Key.Split(':');
+            if (parts.Length == 3)
+            {
+                var consumerGroup = parts[0];
+                var topic = parts[1];
+                var partition = parts[2];
+                
+                yield return new Measurement<long>(
+                    kvp.Value,
+                    new TagList
+                    {
+                        { "consumer_group", consumerGroup },
+                        { "topic", topic },
+                        { "partition", partition }
+                    });
+            }
+        }
+    }
+
+    private IEnumerable<Measurement<long>> GetCommittedOffsetMeasurements()
+    {
+        foreach (var kvp in _committedOffsetValues)
+        {
+            var parts = kvp.Key.Split(':');
+            if (parts.Length == 3)
+            {
+                var consumerGroup = parts[0];
+                var topic = parts[1];
+                var partition = parts[2];
+                
+                yield return new Measurement<long>(
+                    kvp.Value,
+                    new TagList
+                    {
+                        { "consumer_group", consumerGroup },
+                        { "topic", topic },
+                        { "partition", partition }
+                    });
+            }
+        }
+    }
+
+    private IEnumerable<Measurement<long>> GetHighWatermarkMeasurements()
+    {
+        foreach (var kvp in _highWatermarkValues)
+        {
+            var parts = kvp.Key.Split(':');
+            if (parts.Length == 2)
+            {
+                var topic = parts[0];
+                var partition = parts[1];
+                
+                yield return new Measurement<long>(
+                    kvp.Value,
+                    new TagList
+                    {
+                        { "topic", topic },
+                        { "partition", partition }
+                    });
+            }
         }
     }
 
@@ -198,4 +266,3 @@ public sealed class KafkaLagMetrics : IDisposable
         public string Topic { get; set; } = string.Empty;
     }
 }
-
