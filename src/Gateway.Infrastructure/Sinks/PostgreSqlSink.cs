@@ -69,11 +69,11 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
         {
             using var scope = _scopeFactory.CreateScope();
             await using var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
-            _logger.LogInformation("Testing PostgreSQL connection...");
+            _logger.LogDebug("Testing PostgreSQL connection...");
             var canConnect = await dbContext.Database.CanConnectAsync(cancellationToken);
             if (canConnect)
             {
-                _logger.LogInformation("PostgreSQL connection test successful");
+                _logger.LogDebug("PostgreSQL connection test successful");
             }
             else
             {
@@ -95,7 +95,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             _flushTimer.Change(_options.FlushIntervalMs, _options.FlushIntervalMs);
         }
         
-        _logger.LogInformation("PostgreSQL Sink started (BatchSize: {BatchSize}, FlushInterval: {FlushInterval}ms)",
+        _logger.LogDebug("PostgreSQL Sink started (BatchSize: {BatchSize}, FlushInterval: {FlushInterval}ms)",
             _options.BatchSize, _options.FlushIntervalMs);
     }
 
@@ -131,12 +131,12 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
         _cancellationTokenSource?.Dispose();
         _processingTask = null;
         
-        _logger.LogInformation("PostgreSQL Sink stopped");
+        _logger.LogDebug("PostgreSQL Sink stopped");
     }
 
     private async Task ProcessAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("PostgreSQL Sink processing started");
+        _logger.LogDebug("PostgreSQL Sink processing started");
         await foreach (var telemetryEvent in _inputChannel.Reader.ReadAllAsync(cancellationToken))
         {
             try
@@ -154,7 +154,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
                 _logger.LogError(ex, "Error buffering telemetry event {EventId}", telemetryEvent.EventId);
             }
         }
-        _logger.LogInformation("PostgreSQL Sink processing stopped");
+        _logger.LogDebug("PostgreSQL Sink processing stopped");
     }
 
     private async Task BufferEventAsync(TelemetryEvent telemetryEvent, CancellationToken cancellationToken)
@@ -168,7 +168,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             
             if (_buffer.Count >= _options.BatchSize)
             {
-                _logger.LogInformation("Buffer reached batch size ({BatchSize}), flushing to PostgreSQL", _options.BatchSize);
+                _logger.LogDebug("Buffer reached batch size ({BatchSize}), flushing to PostgreSQL", _options.BatchSize);
                 await FlushBufferAsync(cancellationToken).ConfigureAwait(false);
             }
         }
@@ -246,7 +246,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
             // Use AddRange for simplicity - EF Core will handle the insert
             // For idempotent inserts, we'll catch unique constraint violations
             // In production, you might want to use raw SQL with ON CONFLICT DO NOTHING for better performance
-            _logger.LogInformation("Attempting to insert {Count} events to PostgreSQL", entities.Count);
+            _logger.LogDebug("Attempting to insert {Count} events to PostgreSQL", entities.Count);
             dbContext.TelemetryEvents.AddRange(entities);
             await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             
@@ -260,7 +260,7 @@ public sealed class PostgreSqlSink : ISink, IAsyncDisposable
                 }
             }
             
-            _logger.LogInformation("Successfully bulk inserted {Count} events to PostgreSQL", entities.Count);
+            _logger.LogDebug("Successfully bulk inserted {Count} events to PostgreSQL", entities.Count);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException pgEx && pgEx.SqlState == "23505")
         {

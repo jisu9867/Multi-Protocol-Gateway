@@ -108,7 +108,8 @@ builder.Services.AddCors(options =>
         var allowedOrigins = new List<string>
         {
             "http://localhost:5270",
-            "https://localhost:7003"
+            "https://localhost:7003",
+            "http://localhost:5001"  // Docker container UI
         };
         
         // Add Azure UI URL if configured
@@ -131,11 +132,6 @@ builder.Services.AddCors(options =>
         {
             allowedOrigins.Add(azureUiUrlFromEnv2);
         }
-        
-        // Log allowed origins for debugging
-        var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
-        var corsLogger = loggerFactory.CreateLogger("CORS");
-        corsLogger.LogInformation("CORS Allowed Origins: {Origins}", string.Join(", ", allowedOrigins));
         
         policy.WithOrigins(allowedOrigins.ToArray())
               .AllowAnyMethod()
@@ -373,17 +369,9 @@ if (enableSeedData)
 
 var app = builder.Build();
 
-// Log after app is built to confirm all services are registered
-var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
-appLogger.LogInformation("Application built. All hosted services should be starting now.");
-
-// Initialize SignalR metrics to ensure they are always visible in Prometheus
 SignalRMetrics.InitializeMetrics();
-appLogger.LogInformation("SignalR metrics initialized");
-
-// Prometheus metrics are available via OpenTelemetry Prometheus exporter at /metrics endpoint
-appLogger.LogInformation("OpenTelemetry Prometheus exporter available at /metrics endpoint");
-appLogger.LogInformation("Custom metrics (SignalR, Kafka, Pipeline, MQTT) are registered via OTel Meter");
+var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
+appLogger.LogInformation("Gateway API started");
 
 // Configure the HTTP request pipeline
 
@@ -401,36 +389,30 @@ app.UseAuthorization();
 // All metrics (standard + custom) are now exposed via this single endpoint
 app.UseOpenTelemetryPrometheusScrapingEndpoint();
 
-// Test endpoint to verify metrics are being recorded
-app.MapGet("/test-metrics", (ILogger<Program> logger) =>
+// Test endpoint to verify metrics (local Development only; not exposed in Docker/Production)
+if (app.Environment.IsDevelopment())
 {
-    try
+    app.MapGet("/test-metrics", (ILogger<Program> logger) =>
     {
-        logger.LogInformation("Recording test metrics...");
-        
-        // Force record some test metrics to verify they appear
-        SignalRMetrics.RecordMessageSent("ulsan", "line1", "temp", TimeSpan.FromMilliseconds(10));
-        SignalRMetrics.RecordMessageSent("asan", "line2", "humidity", TimeSpan.FromMilliseconds(15));
-        SignalRMetrics.RecordMessageSent("jeonju", "line3", "pressure", TimeSpan.FromMilliseconds(20));
-        
-        KafkaMetrics.RecordMessageProcessed("test-group", "test-topic", TimeSpan.FromMilliseconds(5));
-        KafkaMetrics.RecordMessageProduced("test-topic", TimeSpan.FromMilliseconds(3));
-        
-        MqttMetrics.RecordMessageIngested("test/topic", TimeSpan.FromMilliseconds(8));
-        
-        logger.LogInformation("Test metrics recorded successfully");
-        
-        return Results.Ok(new { 
-            message = "Test metrics recorded. Check /metrics endpoint.",
-            timestamp = DateTime.UtcNow
-        });
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "Error recording test metrics");
-        return Results.Problem($"Error: {ex.Message}");
-    }
-});
+        try
+        {
+            logger.LogInformation("Recording test metrics...");
+            SignalRMetrics.RecordMessageSent("ulsan", "line1", "temp", TimeSpan.FromMilliseconds(10));
+            SignalRMetrics.RecordMessageSent("asan", "line2", "humidity", TimeSpan.FromMilliseconds(15));
+            SignalRMetrics.RecordMessageSent("jeonju", "line3", "pressure", TimeSpan.FromMilliseconds(20));
+            KafkaMetrics.RecordMessageProcessed("test-group", "test-topic", TimeSpan.FromMilliseconds(5));
+            KafkaMetrics.RecordMessageProduced("test-topic", TimeSpan.FromMilliseconds(3));
+            MqttMetrics.RecordMessageIngested("test/topic", TimeSpan.FromMilliseconds(8));
+            logger.LogInformation("Test metrics recorded successfully");
+            return Results.Ok(new { message = "Test metrics recorded. Check /metrics endpoint.", timestamp = DateTime.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error recording test metrics");
+            return Results.Problem($"Error: {ex.Message}");
+        }
+    });
+}
 
 // Health endpoint - using custom HealthController for detailed status
 // Built-in health checks are available at /health/ready and /health/live (if configured)

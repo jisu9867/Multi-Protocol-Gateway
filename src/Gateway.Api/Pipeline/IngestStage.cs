@@ -30,14 +30,14 @@ public sealed class IngestStage : IIngest
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Ingest stage started");
+        _logger.LogDebug("Ingest stage started");
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
         _inputChannel.Writer.Complete();
-        _logger.LogInformation("Ingest stage stopped");
+        _logger.LogDebug("Ingest stage stopped");
         return Task.CompletedTask;
     }
 }

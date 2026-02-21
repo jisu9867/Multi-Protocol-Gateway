@@ -251,7 +251,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
                     var subscribeResult = await _mqttClient.SubscribeAsync(subscribeOptions, cancellationToken)
                         .ConfigureAwait(false);
 
-                    _logger.LogInformation("Subscribed to topic: {Topic}", _options.Topic ?? "factory/+/telemetry");
+                    _logger.LogInformation("MQTT subscribed to {Topic}", _options.Topic ?? "factory/+/telemetry");
 
                     // Reset retry delay on successful connection
                     retryDelay = TimeSpan.FromSeconds(1);
@@ -343,14 +343,20 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         {
             var topic = arg.ApplicationMessage.Topic;
             var payload = arg.ApplicationMessage.ConvertPayloadToString();
+            var payloadLength = payload?.Length ?? 0;
 
-            _logger.LogDebug("Received MQTT message on topic {Topic}", topic);
+            _logger.LogDebug("MQTT message received topic={Topic} len={Length}", topic, payloadLength);
 
             using var activity = ActivitySource.StartActivity("MqttAdapter.ReceiveMessage");
             activity?.SetTag("mqtt.topic", topic);
             activity?.SetTag("adapter.id", _id);
 
             // Parse JSON payload
+            if (string.IsNullOrEmpty(payload))
+            {
+                _logger.LogWarning("MQTT message has empty payload, skipping");
+                return;
+            }
             var jsonDoc = JsonDocument.Parse(payload);
             var root = jsonDoc.RootElement;
 
@@ -400,8 +406,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
                 return;
             }
             
-            _logger.LogDebug("Processing MQTT message: {MessageId} (topic: {Topic}, sourceId: {SourceId}, tag: {Tag})", 
-                messageId, topic, sourceId, tag);
+            _logger.LogDebug("Processing MQTT message: {MessageId} topic={Topic} sourceId={SourceId} tag={Tag}", messageId, topic, sourceId, tag);
 
             // Parse timestamp (ts field) or use current time
             DateTimeOffset timestamp = DateTimeOffset.UtcNow;

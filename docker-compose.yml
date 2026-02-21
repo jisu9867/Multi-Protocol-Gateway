@@ -1,6 +1,19 @@
-version: '3.8'
-
 services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: gateway-mosquitto
+    ports:
+      # Use 1884 on host to avoid conflict with local MQTT (e.g. simulator) on 1883
+      - "1884:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/broker/version' -C 1 -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: gateway-zookeeper
@@ -67,24 +80,29 @@ services:
     ports:
       - "5000:8080"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=gateway;Username=gateway;Password=gateway
-      - Adapters__Mqtt__Server=host.docker.internal
+      # MQTT: in-stack Mosquitto (from host publish to localhost:1884)
+      - Adapters__Mqtt__Server=mosquitto
       - Adapters__Mqtt__Port=1883
       - Adapters__Mqtt__Topic=factory/+/+/telemetry
+      - Adapters__Mqtt__Enabled=true
+      # Kafka settings (can be overridden via environment variables)
       - Kafka__BootstrapServers=kafka:9093
       - Kafka__Topic=telemetry-events
       - Kafka__ConsumerGroupId=gateway-consumer-group
+      # Gateway settings
+      - Gateway__EnableSeedData=true
     depends_on:
+      mosquitto:
+        condition: service_healthy
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   ui:
     build:
@@ -94,9 +112,10 @@ services:
     ports:
       - "5001:8080"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
-      - ApiBaseUrl=http://api:8080
+      # API base URL is set in appsettings.Docker.json, but can be overridden here
+      - GatewayApi__BaseUrl=http://api:8080
     depends_on:
       - api
 

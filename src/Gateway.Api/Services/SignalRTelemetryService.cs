@@ -29,22 +29,14 @@ public class SignalRTelemetryService : BackgroundService
         _hubContext = hubContext;
         _kafkaConsumer = kafkaConsumer ?? throw new ArgumentNullException(nameof(kafkaConsumer));
         
-        _logger.LogInformation("SignalRTelemetryService initialized with KafkaConsumer. OutputChannel is available: {HasChannel}", 
-            _kafkaConsumer.OutputChannel != null);
+        _logger.LogDebug("SignalRTelemetryService initialized with KafkaConsumer");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SignalR Telemetry Service started (using separate Kafka Consumer Group)");
-        _logger.LogInformation("KafkaConsumer instance: {ConsumerType}, OutputChannel: {HasChannel}", 
-            _kafkaConsumer.GetType().Name, _kafkaConsumer.OutputChannel != null);
-        
-        _logger.LogInformation("Waiting for Kafka Consumer to initialize...");
+        _logger.LogInformation("SignalR Telemetry Service started (Kafka consumer group for real-time)");
 
-        // Wait a bit for Kafka Consumer to initialize
         await Task.Delay(5000, stoppingToken).ConfigureAwait(false);
-
-        _logger.LogInformation("Starting to read from SignalR Kafka Consumer OutputChannel...");
         
         if (_kafkaConsumer == null)
         {
@@ -66,18 +58,12 @@ public class SignalRTelemetryService : BackgroundService
             return;
         }
         
-        _logger.LogInformation("OutputChannel Reader available: {HasReader}", true);
-        
-        // Check if channel is already completed
-        if (reader.Completion.IsCompleted)
-        {
-            _logger.LogWarning("OutputChannel Reader is already completed! This means the Kafka Consumer may have stopped.");
-        }
-
         try
         {
-            _logger.LogInformation("Waiting for messages from Kafka Consumer OutputChannel...");
-            _logger.LogInformation("OutputChannel Reader Completion status: {IsCompleted}", reader.Completion.IsCompleted);
+            if (reader.Completion.IsCompleted)
+            {
+                _logger.LogWarning("SignalR Kafka Consumer OutputChannel already completed.");
+            }
             
             // Use a background task to log periodic status updates (only when no messages received)
             var lastEventTime = DateTime.UtcNow;
@@ -109,27 +95,12 @@ public class SignalRTelemetryService : BackgroundService
                 try
                 {
                     eventCount++;
-                    _logger.LogInformation("SignalR: Received event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value}) [Total: {Count}]", 
-                        telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, ExtractValue(telemetryEvent.Value), eventCount);
-                    
                     await BroadcastTelemetryEvent(telemetryEvent, stoppingToken);
-                    
                     broadcastStopwatch.Stop();
-                    // Normalize factory ID to lowercase for consistent metric labels
                     var factoryIdStr = telemetryEvent.FactoryId.ToString().ToLowerInvariant();
                     var lineId = MetricLabelHelper.ExtractLineId(telemetryEvent.SourceId);
-                    
-                    // Always log line_id extraction for debugging (use Information level to ensure it's visible)
-                    _logger.LogInformation("SignalR: Recording metric - FactoryId={FactoryId}, SourceId={SourceId}, ExtractedLineId={LineId}, Tag={Tag}", 
-                        factoryIdStr, telemetryEvent.SourceId, lineId, telemetryEvent.Tag);
-                    
                     if (lineId == "unknown")
-                    {
-                        _logger.LogWarning("SignalR: Failed to extract line_id from SourceId={SourceId}, FactoryId={FactoryId}. SourceId format should be 'factory-lineN' (e.g., 'ulsan-line1')", 
-                            telemetryEvent.SourceId, factoryIdStr);
-                    }
-                    
-                    // Always record metric, even if line_id is unknown (to ensure metrics are visible in Grafana)
+                        _logger.LogDebug("SignalR: line_id unknown for SourceId={SourceId}", telemetryEvent.SourceId);
                     SignalRMetrics.RecordMessageSent(factoryIdStr, lineId, telemetryEvent.Tag, broadcastStopwatch.Elapsed);
                 }
                 catch (Exception ex)
@@ -144,7 +115,7 @@ public class SignalRTelemetryService : BackgroundService
                 }
             }
             
-            _logger.LogWarning("SignalR Kafka Consumer OutputChannel reader completed - no more messages will be received");
+            _logger.LogDebug("SignalR Kafka Consumer OutputChannel reader completed");
         }
         catch (OperationCanceledException)
         {
@@ -157,7 +128,7 @@ public class SignalRTelemetryService : BackgroundService
         }
         finally
         {
-            _logger.LogInformation("SignalR Telemetry Service stopped");
+            _logger.LogDebug("SignalR Telemetry Service stopped");
         }
     }
 
@@ -195,22 +166,9 @@ public class SignalRTelemetryService : BackgroundService
             specificGroupName = $"{factoryIdStr}:{tagStr}:{sourceIdStr}";
         }
         
-        _logger.LogInformation("Broadcasting to groups: {GroupName} and {SpecificGroupName} (FactoryId enum={FactoryId}, string={FactoryIdStr}, Tag={Tag}, SourceId={SourceId})", 
-            groupName, specificGroupName ?? "none", telemetryEvent.FactoryId, factoryIdStr, tagStr, telemetryEvent.SourceId);
-        
-        // Broadcast to general group (factory + tag) - this receives ALL lines for this factory+tag
         await _hubContext.Clients.Group(groupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
-        _logger.LogInformation("Sent to group {GroupName} (all lines)", groupName);
-
-        // Also broadcast to clients subscribed to specific sourceId (specific line)
         if (!string.IsNullOrEmpty(specificGroupName))
-        {
             await _hubContext.Clients.Group(specificGroupName).SendAsync("ReceiveTelemetryEvent", eventDto, cancellationToken);
-            _logger.LogInformation("Sent to group {SpecificGroupName} (specific line)", specificGroupName);
-        }
-
-        _logger.LogInformation("Broadcasted telemetry event {EventId} (Factory={FactoryId}, Tag={Tag}, SourceId={SourceId}, Value={Value})",
-            telemetryEvent.EventId, telemetryEvent.FactoryId, telemetryEvent.Tag, telemetryEvent.SourceId, value);
     }
 
     private static double ExtractValue(System.Text.Json.JsonElement valueElement)

@@ -47,16 +47,19 @@ Gateway/
 ### Docker Compose 사용
 
 ```bash
-docker-compose up -d
+docker compose up --build
 ```
 
 - API: http://localhost:5000
 - UI: http://localhost:5001
-- PostgreSQL: localhost:5432
+- PostgreSQL (호스트 접속): localhost:5433
+- MQTT (Simulator가 publish할 주소): **localhost:1884** (호스트 포트 1884 → 컨테이너 Mosquitto 1883)
+
+로컬 vs Docker 환경별 설정, Simulator MQTT 대상, PostgreSQL 확인 방법은 **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** 참고.
 
 ### 로컬 실행
 
-1. PostgreSQL 실행 (또는 Docker Compose로 postgres 서비스만 실행)
+1. PostgreSQL 실행 (로컬 설치 또는 `docker compose up -d postgres` → 호스트에서 localhost:5433)
 
 2. 데이터베이스 마이그레이션 (선택사항)
 ```bash

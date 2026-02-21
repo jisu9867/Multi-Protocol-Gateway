@@ -3,8 +3,8 @@ global:
   scrape_interval: 15s # Scrape targets every 15 seconds
   evaluation_interval: 15s # Evaluate rules every 15 seconds
   external_labels:
-    cluster: 'gateway-local'
-    environment: 'development'
+    cluster: 'gateway-docker'
+    environment: 'docker'
 
 # Alertmanager configuration (optional)
 # alerting:

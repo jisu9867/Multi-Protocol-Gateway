@@ -87,11 +87,7 @@ public sealed class KafkaProducer : IAsyncDisposable
                 ? "Azure Event Hubs" 
                 : _options.BootstrapServers;
             
-            _logger.LogInformation("Kafka Producer started (Server: {Server}, Topic: {Topic})",
-                serverInfo, _options.Topic);
-            
-            _logger.LogDebug("Kafka Producer configuration: EnableIdempotence={EnableIdempotence}, Acks={Acks}, Retries={Retries}",
-                _options.Producer.EnableIdempotence, _options.Producer.Acks, _options.Producer.Retries);
+            _logger.LogInformation("Kafka Producer started (Server: {Server}, Topic: {Topic})", serverInfo, _options.Topic);
             
             return Task.CompletedTask;
         }
@@ -139,8 +135,6 @@ public sealed class KafkaProducer : IAsyncDisposable
 
     private async Task ProcessAsync(CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Kafka Producer processing started");
-
         await foreach (var telemetryEvent in _inputChannel.Reader.ReadAllAsync(cancellationToken))
         {
             try
@@ -159,7 +153,6 @@ public sealed class KafkaProducer : IAsyncDisposable
             }
         }
 
-        _logger.LogDebug("Kafka Producer processing stopped");
     }
 
     private async Task PublishAsync(TelemetryEvent telemetryEvent, CancellationToken cancellationToken)
@@ -206,10 +199,7 @@ public sealed class KafkaProducer : IAsyncDisposable
             // Record metrics
             KafkaMetrics.RecordMessageProduced(topic, stopwatch.Elapsed);
 
-            _logger.LogDebug("Published telemetry event {EventId} to {Service} topic {Topic}, partition {Partition}, offset {Offset}",
-                telemetryEvent.EventId, 
-                !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) ? "Event Hub" : "Kafka",
-                deliveryResult.Topic, deliveryResult.Partition, deliveryResult.Offset);
+            _logger.LogDebug("Kafka produced EventId={EventId} Topic={Topic} Partition={Partition} Offset={Offset}", telemetryEvent.EventId, deliveryResult.Topic, deliveryResult.Partition, deliveryResult.Offset);
         }
         catch (ProduceException<string, string> ex)
         {

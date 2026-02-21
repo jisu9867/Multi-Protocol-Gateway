@@ -46,21 +46,20 @@ public sealed class PipelineService : BackgroundService
     {
         try
         {
-            _logger.LogInformation("Starting pipeline service");
+            _logger.LogDebug("Starting pipeline service");
 
             // Start pipeline stages
             await _ingest.StartAsync(stoppingToken).ConfigureAwait(false);
             await _normalize.StartAsync(stoppingToken).ConfigureAwait(false);
 
-            // Start Kafka Producer if available
             if (_kafkaProducer != null)
             {
                 await _kafkaProducer.StartAsync(stoppingToken).ConfigureAwait(false);
             }
             else
             {
-                // Fallback to RouteStage if Kafka is not configured
-            await _route.StartAsync(stoppingToken).ConfigureAwait(false);
+                _logger.LogWarning("Kafka Producer is null; falling back to RouteStage.");
+                await _route.StartAsync(stoppingToken).ConfigureAwait(false);
             }
 
             // Start sinks
@@ -72,13 +71,20 @@ public sealed class PipelineService : BackgroundService
             // Connect pipeline stages
             await ConnectPipelineAsync(stoppingToken).ConfigureAwait(false);
 
-            // Start adapters
             foreach (var adapter in _adapters)
             {
-                await adapter.StartAsync(stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    await adapter.StartAsync(stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to start adapter {AdapterId}", adapter.Id);
+                    throw;
+                }
             }
 
-            _logger.LogInformation("Pipeline service started successfully");
+            _logger.LogInformation("Pipeline started: {AdapterCount} adapter(s), Kafka Producer {KafkaStatus}", _adapters.Count(), _kafkaProducer != null ? "on" : "off");
 
             // Keep running until cancellation
             await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
@@ -139,7 +145,6 @@ public sealed class PipelineService : BackgroundService
             {
                 if (_kafkaProducer != null)
                 {
-                    // Send to Kafka Producer
                     await _kafkaProducer.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
                         .ConfigureAwait(false);
                     _metrics.RecordNormalized();
@@ -172,7 +177,7 @@ public sealed class PipelineService : BackgroundService
 
     private async Task ShutdownAsync()
     {
-        _logger.LogInformation("Shutting down pipeline service");
+        _logger.LogDebug("Shutting down pipeline service");
 
         // Stop adapters
         foreach (var adapter in _adapters)
@@ -211,7 +216,7 @@ public sealed class PipelineService : BackgroundService
             }
         }
 
-        _logger.LogInformation("Pipeline service stopped");
+        _logger.LogDebug("Pipeline service stopped");
     }
 }
 

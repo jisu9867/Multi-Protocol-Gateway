@@ -51,7 +51,7 @@ public sealed class NormalizeStage : INormalize
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _processingTask = ProcessAsync(_cancellationTokenSource.Token);
         
-        _logger.LogInformation("Normalize stage started");
+        _logger.LogDebug("Normalize stage started");
         return Task.CompletedTask;
     }
 
@@ -82,7 +82,7 @@ public sealed class NormalizeStage : INormalize
         _cancellationTokenSource?.Dispose();
         _processingTask = null;
         
-        _logger.LogInformation("Normalize stage stopped");
+        _logger.LogDebug("Normalize stage stopped");
     }
 
     private async Task ProcessAsync(CancellationToken cancellationToken)
@@ -92,7 +92,6 @@ public sealed class NormalizeStage : INormalize
             try
             {
                 var telemetryEvent = Normalize(rawData);
-                
                 await _outputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
                     .ConfigureAwait(false);
             }
