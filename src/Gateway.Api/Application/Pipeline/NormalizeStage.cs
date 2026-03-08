@@ -4,7 +4,7 @@ using Gateway.Core.Models;
 using Gateway.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 
-namespace Gateway.Api.Pipeline;
+namespace Gateway.Application.Pipeline;
 
 /// <summary>
 /// Normalization stage implementation
@@ -23,17 +23,17 @@ public sealed class NormalizeStage : INormalize
         BoundedChannelOptions? outputChannelOptions = null)
     {
         _logger = logger;
-        
+
         var inputOptions = inputChannelOptions ?? new BoundedChannelOptions(1000)
         {
             FullMode = BoundedChannelFullMode.Wait
         };
-        
+
         var outputOptions = outputChannelOptions ?? new BoundedChannelOptions(1000)
         {
             FullMode = BoundedChannelFullMode.Wait
         };
-        
+
         _inputChannel = Channel.CreateBounded<RawData>(inputOptions);
         _outputChannel = Channel.CreateBounded<TelemetryEvent>(outputOptions);
     }
@@ -50,7 +50,7 @@ public sealed class NormalizeStage : INormalize
 
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _processingTask = ProcessAsync(_cancellationTokenSource.Token);
-        
+
         _logger.LogDebug("Normalize stage started");
         return Task.CompletedTask;
     }
@@ -63,7 +63,7 @@ public sealed class NormalizeStage : INormalize
         }
 
         _inputChannel.Writer.Complete();
-        
+
         if (_cancellationTokenSource != null)
         {
             _cancellationTokenSource.Cancel();
@@ -81,7 +81,7 @@ public sealed class NormalizeStage : INormalize
         _outputChannel.Writer.Complete();
         _cancellationTokenSource?.Dispose();
         _processingTask = null;
-        
+
         _logger.LogDebug("Normalize stage stopped");
     }
 
@@ -97,8 +97,6 @@ public sealed class NormalizeStage : INormalize
             }
             catch (OperationCanceledException)
             {
-                // Expected during shutdown - ignore silently
-                // Note: TaskCanceledException is a subclass of OperationCanceledException
                 break;
             }
             catch (Exception ex)
@@ -110,7 +108,6 @@ public sealed class NormalizeStage : INormalize
 
     private static TelemetryEvent Normalize(RawData rawData)
     {
-        // Convert payload to JsonElement
         JsonElement value;
         if (rawData.Payload is Dictionary<string, object?> dict)
         {
@@ -121,67 +118,55 @@ public sealed class NormalizeStage : INormalize
             value = JsonSerializer.SerializeToElement(new { value = rawData.Payload });
         }
 
-        // Extract factory_id from metadata or use default (Ulsan)
-        // Only allow Ulsan (1), Asan (2), Jeonju (3) - Hwaseong (4) is removed
         Factory factoryId = Factory.Ulsan;
         if (rawData.Metadata.TryGetValue("factory_id", out var factoryIdValue))
         {
             if (Enum.TryParse<Factory>(factoryIdValue, ignoreCase: true, out var parsedFactory))
             {
-                // Validate that parsed factory is one of the allowed values (1-3)
                 if (parsedFactory == Factory.Ulsan || parsedFactory == Factory.Asan || parsedFactory == Factory.Jeonju)
-            {
-                factoryId = parsedFactory;
+                {
+                    factoryId = parsedFactory;
                 }
                 else
                 {
-                    // Invalid factory (e.g., Hwaseong=4), use default
                     factoryId = Factory.Ulsan;
                 }
             }
             else if (int.TryParse(factoryIdValue, out var factoryInt) && Enum.IsDefined(typeof(Factory), factoryInt))
             {
                 var parsedFactoryFromInt = (Factory)factoryInt;
-                // Validate that parsed factory is one of the allowed values (1-3)
                 if (parsedFactoryFromInt == Factory.Ulsan || parsedFactoryFromInt == Factory.Asan || parsedFactoryFromInt == Factory.Jeonju)
                 {
                     factoryId = parsedFactoryFromInt;
                 }
                 else
                 {
-                    // Invalid factory (e.g., Hwaseong=4), use default
                     factoryId = Factory.Ulsan;
                 }
             }
         }
 
-        // Extract equipment_type from metadata or use "unknown"
         var equipmentType = rawData.Metadata.TryGetValue("equipment_type", out var equipmentTypeValue)
             ? equipmentTypeValue
             : "unknown";
 
-        // Extract equipment_name from metadata or use sourceId as fallback
         var equipmentName = rawData.Metadata.TryGetValue("equipment_name", out var equipmentNameValue)
             ? equipmentNameValue
             : rawData.SourceId;
 
-        // Extract tag from metadata or use default
-        var tag = rawData.Metadata.TryGetValue("tag", out var tagValue) 
-            ? tagValue 
+        var tag = rawData.Metadata.TryGetValue("tag", out var tagValue)
+            ? tagValue
             : "default";
 
-        // Extract sequence from metadata or use 0
-        var sequence = rawData.Metadata.TryGetValue("sequence", out var seqValue) 
+        var sequence = rawData.Metadata.TryGetValue("sequence", out var seqValue)
             && long.TryParse(seqValue, out var seq)
-            ? seq 
+            ? seq
             : 0L;
 
-        // Extract traceId from metadata if available
-        var traceId = rawData.Metadata.TryGetValue("traceId", out var traceValue) 
-            ? traceValue 
+        var traceId = rawData.Metadata.TryGetValue("traceId", out var traceValue)
+            ? traceValue
             : null;
 
-        // Ensure timestamp is UTC
         DateTime utcTimestamp;
         if (rawData.Timestamp.Kind == DateTimeKind.Utc)
         {
@@ -193,7 +178,6 @@ public sealed class NormalizeStage : INormalize
         }
         else
         {
-            // Unspecified - assume UTC
             utcTimestamp = DateTime.SpecifyKind(rawData.Timestamp, DateTimeKind.Utc);
         }
 
@@ -213,4 +197,3 @@ public sealed class NormalizeStage : INormalize
         };
     }
 }
-

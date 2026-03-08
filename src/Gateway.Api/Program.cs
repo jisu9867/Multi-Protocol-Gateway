@@ -1,16 +1,18 @@
 using Gateway.Adapters.FakeAdapter;
 using Gateway.Adapters.MqttAdapter;
+using Gateway.Application.Pipeline;
+using Gateway.Application.Services;
 using Gateway.Api.Configuration;
-using Gateway.Api.Services;
 using Gateway.Api.HealthChecks;
 using Gateway.Api.Hubs;
+using Gateway.Api.Services;
 using Gateway.Core.Adapters;
+using Gateway.Core.Observability;
 using Gateway.Core.Pipeline;
 using Gateway.Infrastructure.Configuration;
 using Gateway.Infrastructure.Data;
 using Gateway.Infrastructure.Sinks;
 using Gateway.Infrastructure.Kafka;
-using Gateway.Api.Pipeline;
 using Gateway.Infrastructure.Observability;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -74,8 +76,8 @@ builder.Services.AddOpenTelemetry()
         .AddSource("Gateway.Adapters.MqttAdapter")
         .AddSource("Gateway.Adapters.FakeAdapter")
         .AddSource("Gateway.Infrastructure.Kafka")
-        .AddSource("Gateway.Api.Pipeline")
-        .AddSource("Gateway.Api.Services")
+        .AddSource("Gateway.Application.Pipeline")
+        .AddSource("Gateway.Application.Services")
         .SetSampler(new TraceIdRatioBasedSampler(1.0)) // Sample 100% in production, adjust as needed
     )
     .WithMetrics(metrics => metrics
@@ -112,25 +114,16 @@ builder.Services.AddCors(options =>
             "http://localhost:5001"  // Docker container UI
         };
         
-        // Add Azure UI URL if configured
-        var azureUiUrl = builder.Configuration["Cors:AzureUiUrl"];
-        if (!string.IsNullOrWhiteSpace(azureUiUrl))
+        var configuredOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+        allowedOrigins.AddRange(configuredOrigins.Where(origin => !string.IsNullOrWhiteSpace(origin)));
+
+        var originsFromEnv = Environment.GetEnvironmentVariable("CORS__ALLOWED_ORIGINS");
+        if (!string.IsNullOrWhiteSpace(originsFromEnv))
         {
-            allowedOrigins.Add(azureUiUrl);
-        }
-        
-        // Also check environment variable for Azure UI URL (both formats)
-        var azureUiUrlFromEnv = Environment.GetEnvironmentVariable("CORS__AZURE_UI_URL");
-        if (!string.IsNullOrWhiteSpace(azureUiUrlFromEnv))
-        {
-            allowedOrigins.Add(azureUiUrlFromEnv);
-        }
-        
-        // Also check Cors__AzureUiUrl format (double underscore)
-        var azureUiUrlFromEnv2 = Environment.GetEnvironmentVariable("Cors__AzureUiUrl");
-        if (!string.IsNullOrWhiteSpace(azureUiUrlFromEnv2))
-        {
-            allowedOrigins.Add(azureUiUrlFromEnv2);
+            allowedOrigins.AddRange(
+                originsFromEnv
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(origin => !string.IsNullOrWhiteSpace(origin)));
         }
         
         policy.WithOrigins(allowedOrigins.ToArray())
@@ -162,6 +155,7 @@ builder.Services.AddSingleton<IPipelineMetrics, DefaultPipelineMetrics>();
 // Observability Services
 builder.Services.AddSingleton<PipelineMetricsExporter>();
 builder.Services.AddSingleton<KafkaLagMetrics>();
+builder.Services.AddSingleton<IMqttIngestionMetrics, MqttIngestionMetricsRecorder>();
 
 // Pipeline stages
 builder.Services.AddSingleton<IIngest, IngestStage>();
@@ -186,6 +180,7 @@ builder.Services.AddSingleton<KafkaProducer>(sp =>
     var kafkaOptions = sp.GetRequiredService<IOptions<KafkaOptions>>();
     return new KafkaProducer(logger, kafkaOptions);
 });
+builder.Services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<KafkaProducer>());
 
 // Kafka Consumer for PostgreSQL (reads from Kafka and forwards to PostgreSQL)
 builder.Services.AddSingleton<KafkaConsumer>(sp =>
@@ -328,6 +323,7 @@ if (adapterOptions.Mqtt.Enabled)
     {
         var logger = sp.GetRequiredService<ILogger<MqttAdapter>>();
         var dataHandler = sp.GetRequiredService<IAdapterDataHandler>();
+        var mqttIngestionMetrics = sp.GetRequiredService<IMqttIngestionMetrics>();
         
         var mqttOptions = new Gateway.Adapters.MqttAdapter.MqttAdapterOptions
         {
@@ -339,7 +335,7 @@ if (adapterOptions.Mqtt.Enabled)
             Topic = adapterOptions.Mqtt.Topic
         };
         
-        var adapter = new MqttAdapter("mqtt-001", mqttOptions, logger, dataHandler);
+        var adapter = new MqttAdapter("mqtt-001", mqttOptions, logger, dataHandler, mqttIngestionMetrics);
         return adapter;
     });
 }
@@ -370,6 +366,10 @@ if (enableSeedData)
 var app = builder.Build();
 
 SignalRMetrics.InitializeMetrics();
+KafkaMetrics.InitializeMetrics();
+MqttMetrics.InitializeMetrics();
+PipelineMetricsExporter.InitializeMetrics();
+app.Services.GetRequiredService<KafkaLagMetrics>().SeedMetrics();
 var appLogger = app.Services.GetRequiredService<ILogger<Program>>();
 appLogger.LogInformation("Gateway API started");
 
@@ -381,13 +381,8 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 // Prometheus metrics endpoint (OpenTelemetry Prometheus exporter)
-// MUST be before MapControllers() and other endpoint mappings to ensure /metrics is handled by OpenTelemetry
-// This endpoint exposes Prometheus text/plain format metrics from OpenTelemetry
-// UseOpenTelemetryPrometheusScrapingEndpoint() registers middleware that handles GET /metrics requests
-// and returns Prometheus text format (text/plain), not JSON
-// Note: This must be called BEFORE any MapGet("/metrics") or MapControllers() to take precedence
-// All metrics (standard + custom) are now exposed via this single endpoint
-app.UseOpenTelemetryPrometheusScrapingEndpoint();
+// Map endpoint explicitly so /metrics returns Prometheus text format correctly.
+app.MapPrometheusScrapingEndpoint("/metrics");
 
 // Test endpoint to verify metrics (local Development only; not exposed in Docker/Production)
 if (app.Environment.IsDevelopment())
@@ -409,6 +404,39 @@ if (app.Environment.IsDevelopment())
         catch (Exception ex)
         {
             logger.LogError(ex, "Error recording test metrics");
+            return Results.Problem($"Error: {ex.Message}");
+        }
+    });
+}
+
+// Test-only observability endpoint for E2E automation.
+// Keep disabled by default and enable explicitly in test environments.
+var enableObservabilityTestEndpoints = app.Configuration.GetValue<bool>("Gateway:EnableObservabilityTestEndpoints", false) ||
+                                       app.Configuration.GetValue<bool>("ENABLE_OBSERVABILITY_TEST_ENDPOINTS", false) ||
+                                       bool.TryParse(Environment.GetEnvironmentVariable("ENABLE_OBSERVABILITY_TEST_ENDPOINTS"), out var testEndpointFromEnv) && testEndpointFromEnv;
+
+if (enableObservabilityTestEndpoints)
+{
+    app.MapPost("/test/observability/seed", (ILogger<Program> logger, KafkaLagMetrics kafkaLagMetrics) =>
+    {
+        try
+        {
+            SignalRMetrics.InitializeMetrics();
+            KafkaMetrics.InitializeMetrics();
+            MqttMetrics.InitializeMetrics();
+            PipelineMetricsExporter.InitializeMetrics();
+            kafkaLagMetrics.SeedMetrics();
+
+            logger.LogInformation("Observability metrics seeded for E2E.");
+            return Results.Ok(new
+            {
+                message = "Observability metrics seeded.",
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to seed observability metrics.");
             return Results.Problem($"Error: {ex.Message}");
         }
     });

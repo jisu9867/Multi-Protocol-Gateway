@@ -1,11 +1,11 @@
-using Gateway.Adapters.FakeAdapter;
+using Gateway.Core.Adapters;
 using Gateway.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 
-namespace Gateway.Api.Services;
+namespace Gateway.Application.Services;
 
 /// <summary>
-/// Handles data from adapters and feeds into the pipeline
+/// Handles data from adapters and feeds into the pipeline.
 /// </summary>
 public sealed class AdapterDataHandler : IAdapterDataHandler
 {

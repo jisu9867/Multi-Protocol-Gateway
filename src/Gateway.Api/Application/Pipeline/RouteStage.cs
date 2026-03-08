@@ -3,10 +3,10 @@ using Gateway.Core.Models;
 using Gateway.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 
-namespace Gateway.Api.Pipeline;
+namespace Gateway.Application.Pipeline;
 
 /// <summary>
-/// Routing stage implementation - routes to all sinks based on tag prefix
+/// Routing stage implementation - routes to all sinks
 /// </summary>
 public sealed class RouteStage : IRoute
 {
@@ -24,15 +24,13 @@ public sealed class RouteStage : IRoute
     {
         _logger = logger;
         _sinks = sinks.ToList();
-        
+
         var inputOptions = inputChannelOptions ?? new BoundedChannelOptions(1000)
         {
             FullMode = BoundedChannelFullMode.Wait
         };
-        
+
         _inputChannel = Channel.CreateBounded<TelemetryEvent>(inputOptions);
-        
-        // Use sink input channels as output channels
         _outputChannels = _sinks.Select(sink => sink.InputChannel).ToList();
     }
 
@@ -48,7 +46,7 @@ public sealed class RouteStage : IRoute
 
         _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _processingTask = ProcessAsync(_cancellationTokenSource.Token);
-        
+
         _logger.LogInformation("Route stage started with {SinkCount} sinks", _sinks.Count);
         return Task.CompletedTask;
     }
@@ -61,7 +59,7 @@ public sealed class RouteStage : IRoute
         }
 
         _inputChannel.Writer.Complete();
-        
+
         if (_cancellationTokenSource != null)
         {
             _cancellationTokenSource.Cancel();
@@ -78,7 +76,7 @@ public sealed class RouteStage : IRoute
 
         _cancellationTokenSource?.Dispose();
         _processingTask = null;
-        
+
         _logger.LogInformation("Route stage stopped");
     }
 
@@ -88,15 +86,13 @@ public sealed class RouteStage : IRoute
         {
             try
             {
-                // Simple routing: route to all sinks (tag prefix routing can be added here if needed)
-                // For now, all events go to all sinks
                 var tasks = _outputChannels.Select(async channel =>
                 {
                     try
                     {
                         var canWrite = await channel.Writer.WaitToWriteAsync(cancellationToken)
                             .ConfigureAwait(false);
-                        
+
                         if (canWrite)
                         {
                             await channel.Writer.WriteAsync(telemetryEvent, cancellationToken)
@@ -105,8 +101,6 @@ public sealed class RouteStage : IRoute
                     }
                     catch (OperationCanceledException)
                     {
-                        // Expected during shutdown - ignore silently
-                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                     }
                     catch (Exception ex)
                     {

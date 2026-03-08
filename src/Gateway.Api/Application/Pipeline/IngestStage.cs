@@ -2,7 +2,7 @@ using System.Threading.Channels;
 using Gateway.Core.Pipeline;
 using Microsoft.Extensions.Logging;
 
-namespace Gateway.Api.Pipeline;
+namespace Gateway.Application.Pipeline;
 
 /// <summary>
 /// Ingestion stage implementation
@@ -17,12 +17,12 @@ public sealed class IngestStage : IIngest
         BoundedChannelOptions? channelOptions = null)
     {
         _logger = logger;
-        
+
         var options = channelOptions ?? new BoundedChannelOptions(1000)
         {
             FullMode = BoundedChannelFullMode.Wait
         };
-        
+
         _inputChannel = Channel.CreateBounded<RawData>(options);
     }
 
@@ -41,4 +41,3 @@ public sealed class IngestStage : IIngest
         return Task.CompletedTask;
     }
 }
-

@@ -3,8 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Gateway.Core.Adapters;
-using Gateway.Adapters.FakeAdapter;
-using Gateway.Infrastructure.Observability;
+using Gateway.Core.Observability;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MQTTnet.Client;
@@ -23,6 +22,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
     private readonly string _id;
     private readonly MqttAdapterOptions _options;
     private readonly IAdapterDataHandler? _dataHandler;
+    private readonly IMqttIngestionMetrics _mqttIngestionMetrics;
     
     private IMqttClient? _mqttClient;
     private Task? _connectionTask;
@@ -58,12 +58,14 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         string id,
         MqttAdapterOptions options,
         ILogger<MqttAdapter> logger,
-        IAdapterDataHandler? dataHandler = null)
+        IAdapterDataHandler? dataHandler = null,
+        IMqttIngestionMetrics? mqttIngestionMetrics = null)
     {
         _id = id;
         _options = options;
         _logger = logger;
         _dataHandler = dataHandler;
+        _mqttIngestionMetrics = mqttIngestionMetrics ?? NullMqttIngestionMetrics.Instance;
     }
 
     public string Id => _id;
@@ -513,7 +515,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
                 ingestStopwatch.Stop();
                 
                 // Record metrics
-                MqttMetrics.RecordMessageIngested(topic, ingestStopwatch.Elapsed);
+                _mqttIngestionMetrics.RecordMessageIngested(topic, ingestStopwatch.Elapsed);
 
                 // Update metrics
                 lock (_metricsLock)
@@ -527,7 +529,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         {
             ingestStopwatch.Stop();
             var topic = arg.ApplicationMessage.Topic;
-            MqttMetrics.RecordIngestError(topic);
+            _mqttIngestionMetrics.RecordIngestError(topic);
             
             _logger.LogWarning(ex, "Failed to parse MQTT message as JSON");
         }
@@ -535,7 +537,7 @@ public sealed class MqttAdapter : IAdapter, IAsyncDisposable
         {
             ingestStopwatch.Stop();
             var topic = arg.ApplicationMessage.Topic;
-            MqttMetrics.RecordIngestError(topic);
+            _mqttIngestionMetrics.RecordIngestError(topic);
             
             _logger.LogError(ex, "Error processing MQTT message");
         }

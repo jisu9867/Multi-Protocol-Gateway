@@ -1,15 +1,12 @@
-using Gateway.Adapters.FakeAdapter;
 using Gateway.Core.Adapters;
 using Gateway.Core.Pipeline;
-using Gateway.Api.Pipeline;
-using Gateway.Infrastructure.Kafka;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace Gateway.Api.Services;
+namespace Gateway.Application.Services;
 
 /// <summary>
-/// Hosted service that orchestrates the pipeline
+/// Hosted service that orchestrates the pipeline.
 /// </summary>
 public sealed class PipelineService : BackgroundService
 {
@@ -20,7 +17,7 @@ public sealed class PipelineService : BackgroundService
     private readonly IEnumerable<ISink> _sinks;
     private readonly IEnumerable<IAdapter> _adapters;
     private readonly IPipelineMetrics _metrics;
-    private readonly KafkaProducer? _kafkaProducer;
+    private readonly IEventPublisher? _eventPublisher;
 
     public PipelineService(
         ILogger<PipelineService> logger,
@@ -30,7 +27,7 @@ public sealed class PipelineService : BackgroundService
         IEnumerable<ISink> sinks,
         IEnumerable<IAdapter> adapters,
         IPipelineMetrics metrics,
-        KafkaProducer? kafkaProducer = null)
+        IEventPublisher? eventPublisher = null)
     {
         _logger = logger;
         _ingest = ingest;
@@ -39,7 +36,7 @@ public sealed class PipelineService : BackgroundService
         _sinks = sinks;
         _adapters = adapters;
         _metrics = metrics;
-        _kafkaProducer = kafkaProducer;
+        _eventPublisher = eventPublisher;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,27 +45,24 @@ public sealed class PipelineService : BackgroundService
         {
             _logger.LogDebug("Starting pipeline service");
 
-            // Start pipeline stages
             await _ingest.StartAsync(stoppingToken).ConfigureAwait(false);
             await _normalize.StartAsync(stoppingToken).ConfigureAwait(false);
 
-            if (_kafkaProducer != null)
+            if (_eventPublisher != null)
             {
-                await _kafkaProducer.StartAsync(stoppingToken).ConfigureAwait(false);
+                await _eventPublisher.StartAsync(stoppingToken).ConfigureAwait(false);
             }
             else
             {
-                _logger.LogWarning("Kafka Producer is null; falling back to RouteStage.");
+                _logger.LogWarning("Event publisher is null; falling back to RouteStage.");
                 await _route.StartAsync(stoppingToken).ConfigureAwait(false);
             }
 
-            // Start sinks
             foreach (var sink in _sinks)
             {
                 await sink.StartAsync(stoppingToken).ConfigureAwait(false);
             }
 
-            // Connect pipeline stages
             await ConnectPipelineAsync(stoppingToken).ConfigureAwait(false);
 
             foreach (var adapter in _adapters)
@@ -84,14 +78,15 @@ public sealed class PipelineService : BackgroundService
                 }
             }
 
-            _logger.LogInformation("Pipeline started: {AdapterCount} adapter(s), Kafka Producer {KafkaStatus}", _adapters.Count(), _kafkaProducer != null ? "on" : "off");
+            _logger.LogInformation(
+                "Pipeline started: {AdapterCount} adapter(s), EventPublisher {PublisherStatus}",
+                _adapters.Count(),
+                _eventPublisher != null ? "on" : "off");
 
-            // Keep running until cancellation
             await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Expected during shutdown
         }
         catch (Exception ex)
         {
@@ -106,72 +101,61 @@ public sealed class PipelineService : BackgroundService
 
     private Task ConnectPipelineAsync(CancellationToken cancellationToken)
     {
-        // Connect ingest -> normalize
         _ = Task.Run(async () =>
         {
             try
-        {
-            await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                await foreach (var rawData in _ingest.InputChannel.Reader.ReadAllAsync(cancellationToken))
                 {
                     try
-            {
-                await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
-                    .ConfigureAwait(false);
-                _metrics.RecordIngested();
+                    {
+                        await _normalize.InputChannel.Writer.WriteAsync(rawData, cancellationToken)
+                            .ConfigureAwait(false);
+                        _metrics.RecordIngested();
                     }
                     catch (OperationCanceledException)
                     {
-                        // Expected during shutdown
-                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                         break;
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                // Expected during shutdown
-                // Note: TaskCanceledException is a subclass of OperationCanceledException
             }
         }, cancellationToken);
 
-        // Connect normalize -> Kafka Producer (if available) or RouteStage (fallback)
         _ = Task.Run(async () =>
         {
             try
-        {
-            await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
             {
+                await foreach (var telemetryEvent in _normalize.OutputChannel.Reader.ReadAllAsync(cancellationToken))
+                {
                     try
-            {
-                if (_kafkaProducer != null)
-                {
-                    await _kafkaProducer.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                        .ConfigureAwait(false);
-                    _metrics.RecordNormalized();
-                }
-                else
-                {
-                    // Fallback to RouteStage if Kafka is not configured
-                await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
-                    .ConfigureAwait(false);
-                _metrics.RecordNormalized();
-                }
+                    {
+                        if (_eventPublisher != null)
+                        {
+                            await _eventPublisher.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                                .ConfigureAwait(false);
+                            _metrics.RecordNormalized();
+                        }
+                        else
+                        {
+                            await _route.InputChannel.Writer.WriteAsync(telemetryEvent, cancellationToken)
+                                .ConfigureAwait(false);
+                            _metrics.RecordNormalized();
+                        }
                     }
                     catch (OperationCanceledException)
                     {
-                        // Expected during shutdown
-                        // Note: TaskCanceledException is a subclass of OperationCanceledException
                         break;
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                // Expected during shutdown
-                // Note: TaskCanceledException is a subclass of OperationCanceledException
             }
         }, cancellationToken);
-        
+
         return Task.CompletedTask;
     }
 
@@ -179,7 +163,6 @@ public sealed class PipelineService : BackgroundService
     {
         _logger.LogDebug("Shutting down pipeline service");
 
-        // Stop adapters
         foreach (var adapter in _adapters)
         {
             try
@@ -192,14 +175,13 @@ public sealed class PipelineService : BackgroundService
             }
         }
 
-        // Stop pipeline stages
-        if (_kafkaProducer != null)
+        if (_eventPublisher != null)
         {
-            await _kafkaProducer.StopAsync().ConfigureAwait(false);
+            await _eventPublisher.StopAsync().ConfigureAwait(false);
         }
         else
         {
-        await _route.StopAsync().ConfigureAwait(false);
+            await _route.StopAsync().ConfigureAwait(false);
         }
         await _normalize.StopAsync().ConfigureAwait(false);
         await _ingest.StopAsync().ConfigureAwait(false);
@@ -219,4 +201,3 @@ public sealed class PipelineService : BackgroundService
         _logger.LogDebug("Pipeline service stopped");
     }
 }
-

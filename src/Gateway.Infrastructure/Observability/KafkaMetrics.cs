@@ -99,4 +99,21 @@ public sealed class KafkaMetrics
         };
         KafkaProducerMessagesTotal.Add(1, tags);
     }
+
+    /// <summary>
+    /// Seed Kafka metrics so Grafana panels do not show "No data" before live traffic arrives.
+    /// </summary>
+    public static void InitializeMetrics()
+    {
+        var topic = "telemetry-events";
+        var consumerGroup = "gateway-observability-seed";
+
+        // Process side
+        RecordMessageProcessed(consumerGroup, topic, TimeSpan.FromMilliseconds(5));
+        RecordMessageError(consumerGroup, topic);
+
+        // Producer side
+        RecordMessageProduced(topic, TimeSpan.FromMilliseconds(3));
+        RecordProduceError(topic);
+    }
 }

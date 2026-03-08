@@ -169,4 +169,20 @@ public sealed class PipelineMetricsExporter : IHostedService, IDisposable
     {
         _updateTimer?.Dispose();
     }
+
+    /// <summary>
+    /// Seed pipeline metrics so Grafana panels do not show "No data" before live traffic arrives.
+    /// </summary>
+    public static void InitializeMetrics()
+    {
+        var tags = new TagList { { "factory_id", "unknown" } };
+        PipelineIngestedTotal.Add(1, tags);
+        PipelineNormalizedTotal.Add(1, tags);
+        PipelineRoutedTotal.Add(1, tags);
+        PipelinePersistedTotal.Add(1, tags);
+        PipelineDroppedTotal.Add(1, tags);
+
+        var durationTags = new TagList { { "stage", "pipeline" } };
+        PipelineProcessingDuration.Record(0.01, durationTags);
+    }
 }

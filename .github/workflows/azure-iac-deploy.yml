@@ -1,0 +1,145 @@
+﻿name: Azure IaC Deploy
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [develop, main]
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_API: ${{ github.repository }}/gateway-api
+  IMAGE_NAME_UI: ${{ github.repository }}/gateway-ui
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bicep Build
+        run: az bicep build --file infra/main.bicep
+
+      - name: What-if (dev)
+        run: |
+          az deployment group what-if \
+            --resource-group rg-gateway-dev-kr \
+            --template-file infra/main.bicep \
+            --parameters @infra/environments/dev.bicepparam \
+            --parameters postgresAdminPassword='${{ secrets.DEV_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
+
+  build_and_push:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push API
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/Gateway.Api/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}
+
+      - name: Build and Push UI
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: src/Gateway.Ui/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}
+
+  deploy_dev:
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: build_and_push
+    environment: Development
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy (dev)
+        id: deploy
+        run: |
+          az deployment group create \
+            --resource-group rg-gateway-dev-kr \
+            --template-file infra/main.bicep \
+            --parameters @infra/environments/dev.bicepparam \
+            --parameters postgresAdminPassword='${{ secrets.DEV_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}' \
+            --query properties.outputs > outputs.json
+
+          echo "api_url=$(jq -r '.apiUrl.value' outputs.json)" >> $GITHUB_OUTPUT
+          echo "ui_url=$(jq -r '.uiUrl.value' outputs.json)" >> $GITHUB_OUTPUT
+
+      - name: Smoke Test (dev)
+        run: |
+          set -e
+          curl -fsSL "${{ steps.deploy.outputs.api_url }}/health"
+          curl -fsSL "${{ steps.deploy.outputs.api_url }}/metrics"
+          curl -fsSL "${{ steps.deploy.outputs.ui_url }}"
+
+  deploy_prod:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: build_and_push
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: What-if (prod)
+        run: |
+          az deployment group what-if \
+            --resource-group rg-gateway-prod-kr \
+            --template-file infra/main.bicep \
+            --parameters @infra/environments/prod.bicepparam \
+            --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
+
+      - name: Deploy (prod)
+        run: |
+          az deployment group create \
+            --resource-group rg-gateway-prod-kr \
+            --template-file infra/main.bicep \
+            --parameters @infra/environments/prod.bicepparam \
+            --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'

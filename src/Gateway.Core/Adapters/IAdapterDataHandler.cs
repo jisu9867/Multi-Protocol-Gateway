@@ -1,4 +1,4 @@
-namespace Gateway.Adapters.FakeAdapter;
+namespace Gateway.Core.Adapters;
 
 /// <summary>
 /// Handler interface for adapter data
@@ -16,4 +16,3 @@ public interface IAdapterDataHandler
         Dictionary<string, string>? metadata = null,
         CancellationToken cancellationToken = default);
 }
-

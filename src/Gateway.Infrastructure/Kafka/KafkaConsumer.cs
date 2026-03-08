@@ -67,18 +67,7 @@ public sealed class KafkaConsumer : BackgroundService
                 AllowAutoCreateTopics = true
             };
 
-            // Apply Event Hubs configuration if connection string is provided
-            if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
-            {
-                var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-                EventHubsHelper.ApplyEventHubsConfig(config, eventHubsConfig);
-                
-                // Log Event Hub name if specified
-                if (eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName))
-                {
-                    _logger.LogInformation("Using Event Hub name from connection string as topic: {EventHubName}", eventHubName);
-                }
-            }
+            ApplySecuritySettings(config);
 
             var consumerBuilder = new ConsumerBuilder<string, string>(config);
             _consumer = consumerBuilder.Build();
@@ -86,19 +75,10 @@ public sealed class KafkaConsumer : BackgroundService
             // Wait a bit for Kafka/Event Hubs to be ready
             await Task.Delay(2000, stoppingToken).ConfigureAwait(false);
 
-            // Use Event Hub name as topic if available, otherwise use configured topic
-            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
-                ? GetEventHubNameFromConnectionString() ?? _options.Topic
-                : _options.Topic;
-            
-            _consumer.Subscribe(topic);
+            _consumer.Subscribe(_options.Topic);
 
-            var serverInfo = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
-                ? "Azure Event Hubs" 
-                : _options.BootstrapServers;
-            
             _logger.LogInformation("Kafka Consumer started (Server: {Server}, Topic: {Topic}, GroupId: {GroupId})",
-                serverInfo, _options.Topic, _consumerGroupId);
+                _options.BootstrapServers, _options.Topic, _consumerGroupId);
             
             _logger.LogInformation("Kafka Consumer configuration: AutoOffsetReset={AutoOffsetReset}, EnableAutoCommit={EnableAutoCommit}, GroupId={GroupId}",
                 _autoOffsetReset, _options.Consumer.EnableAutoCommit, _consumerGroupId);
@@ -261,15 +241,33 @@ public sealed class KafkaConsumer : BackgroundService
         }
     }
 
-    private string? GetEventHubNameFromConnectionString()
+    private void ApplySecuritySettings(ConsumerConfig config)
     {
-        if (string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+        if (string.IsNullOrWhiteSpace(_options.SecurityProtocol))
         {
-            return null;
+            return;
         }
-        
-        var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-        return eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName) ? eventHubName : null;
+
+        if (Enum.TryParse<SecurityProtocol>(_options.SecurityProtocol, true, out var securityProtocol))
+        {
+            config.SecurityProtocol = securityProtocol;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslMechanism) &&
+            Enum.TryParse<SaslMechanism>(_options.SaslMechanism, true, out var saslMechanism))
+        {
+            config.SaslMechanism = saslMechanism;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslUsername))
+        {
+            config.SaslUsername = _options.SaslUsername;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslPassword))
+        {
+            config.SaslPassword = _options.SaslPassword;
+        }
     }
 
     public override void Dispose()
@@ -278,4 +276,3 @@ public sealed class KafkaConsumer : BackgroundService
         base.Dispose();
     }
 }
-

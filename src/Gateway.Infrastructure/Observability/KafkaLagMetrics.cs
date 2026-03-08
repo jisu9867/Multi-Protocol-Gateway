@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Confluent.Kafka;
 using Gateway.Infrastructure.Configuration;
-using Gateway.Infrastructure.Kafka;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -84,12 +83,7 @@ public sealed class KafkaLagMetrics : IDisposable
                 BootstrapServers = _options.BootstrapServers
             };
 
-            // Apply Event Hubs configuration if provided
-            if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
-            {
-                var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-                EventHubsHelper.ApplyEventHubsConfig(adminConfig, eventHubsConfig);
-            }
+            ApplySecuritySettings(adminConfig);
 
             using var adminClient = new AdminClientBuilder(adminConfig).Build();
 
@@ -245,14 +239,52 @@ public sealed class KafkaLagMetrics : IDisposable
             EnableAutoCommit = false
         };
 
-        // Apply Event Hubs configuration if provided
-        if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
-        {
-            var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-            EventHubsHelper.ApplyEventHubsConfig(config, eventHubsConfig);
-        }
+        ApplySecuritySettings(config);
 
         return new ConsumerBuilder<string, string>(config).Build();
+    }
+
+    private void ApplySecuritySettings(ClientConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(_options.SecurityProtocol))
+        {
+            return;
+        }
+
+        if (Enum.TryParse<SecurityProtocol>(_options.SecurityProtocol, true, out var securityProtocol))
+        {
+            config.SecurityProtocol = securityProtocol;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslMechanism) &&
+            Enum.TryParse<SaslMechanism>(_options.SaslMechanism, true, out var saslMechanism))
+        {
+            config.SaslMechanism = saslMechanism;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslUsername))
+        {
+            config.SaslUsername = _options.SaslUsername;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslPassword))
+        {
+            config.SaslPassword = _options.SaslPassword;
+        }
+    }
+
+    /// <summary>
+    /// Seed lag metrics so Grafana panels do not show "No data" before Kafka traffic arrives.
+    /// </summary>
+    public void SeedMetrics()
+    {
+        const string consumerGroup = "gateway-observability-seed";
+        const string topic = "telemetry-events";
+        const string partition = "0";
+
+        _lagValues.AddOrUpdate($"{consumerGroup}:{topic}:{partition}", 0, (_, _) => 0);
+        _committedOffsetValues.AddOrUpdate($"{consumerGroup}:{topic}:{partition}", 0, (_, _) => 0);
+        _highWatermarkValues.AddOrUpdate($"{topic}:{partition}", 0, (_, _) => 0);
     }
 
     public void Dispose()

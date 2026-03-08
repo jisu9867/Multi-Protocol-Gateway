@@ -9,18 +9,31 @@ public sealed class KafkaOptions
 
     /// <summary>
     /// Kafka bootstrap servers (comma-separated list)
-    /// For Azure Event Hubs, this will be auto-generated from EventHubsConnectionString if provided
     /// </summary>
     public string BootstrapServers { get; set; } = "localhost:9092";
 
     /// <summary>
-    /// Azure Event Hubs connection string (optional, takes precedence over BootstrapServers if provided)
-    /// Format: Endpoint=sb://{namespace}.servicebus.windows.net/;SharedAccessKeyName={keyName};SharedAccessKey={key};EntityPath={eventHubName}
+    /// Security protocol. Example: Plaintext, Ssl, SaslPlaintext, SaslSsl
     /// </summary>
-    public string? EventHubsConnectionString { get; set; }
+    public string? SecurityProtocol { get; set; }
 
     /// <summary>
-    /// Topic name for telemetry events (Event Hub name for Azure Event Hubs)
+    /// SASL mechanism. Example: Plain, ScramSha256, ScramSha512
+    /// </summary>
+    public string? SaslMechanism { get; set; }
+
+    /// <summary>
+    /// SASL username (for Event Hubs Kafka endpoint use "$ConnectionString")
+    /// </summary>
+    public string? SaslUsername { get; set; }
+
+    /// <summary>
+    /// SASL password (for Event Hubs Kafka endpoint use full Event Hubs connection string)
+    /// </summary>
+    public string? SaslPassword { get; set; }
+
+    /// <summary>
+    /// Topic name for telemetry events
     /// </summary>
     public string Topic { get; set; } = "telemetry-events";
 
@@ -101,4 +114,3 @@ public sealed class KafkaConsumerOptions
     /// </summary>
     public bool EnableAutoOffsetStore { get; set; } = false;
 }
-

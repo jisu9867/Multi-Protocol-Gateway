@@ -52,4 +52,14 @@ public sealed class MqttMetrics
         };
         MqttMessagesIngestedTotal.Add(1, tags);
     }
+
+    /// <summary>
+    /// Seed MQTT metrics so Grafana panels do not show "No data" before live traffic arrives.
+    /// </summary>
+    public static void InitializeMetrics()
+    {
+        var topic = "factory/line-1/ulsan-line1/telemetry";
+        RecordMessageIngested(topic, TimeSpan.FromMilliseconds(8));
+        RecordIngestError(topic);
+    }
 }

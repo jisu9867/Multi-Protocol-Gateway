@@ -15,7 +15,7 @@ namespace Gateway.Infrastructure.Kafka;
 /// <summary>
 /// Kafka Producer that sends telemetry events to Kafka topic
 /// </summary>
-public sealed class KafkaProducer : IAsyncDisposable
+public sealed class KafkaProducer : IEventPublisher, IAsyncDisposable
 {
     private readonly ILogger<KafkaProducer> _logger;
     private readonly KafkaOptions _options;
@@ -62,20 +62,7 @@ public sealed class KafkaProducer : IAsyncDisposable
                 RequestTimeoutMs = 30000
             };
 
-            // Apply Event Hubs configuration if connection string is provided
-            string? actualTopic = _options.Topic;
-            if (!string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
-            {
-                var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-                EventHubsHelper.ApplyEventHubsConfig(config, eventHubsConfig);
-                
-                // Override topic with Event Hub name if specified in connection string
-                if (eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName))
-                {
-                    actualTopic = eventHubName;
-                    _logger.LogInformation("Using Event Hub name from connection string as topic: {EventHubName}", eventHubName);
-                }
-            }
+            ApplySecuritySettings(config);
 
             var producerBuilder = new ProducerBuilder<string, string>(config);
             _producer = producerBuilder.Build();
@@ -83,11 +70,8 @@ public sealed class KafkaProducer : IAsyncDisposable
             _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _processingTask = ProcessAsync(_cancellationTokenSource.Token);
 
-            var serverInfo = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
-                ? "Azure Event Hubs" 
-                : _options.BootstrapServers;
-            
-            _logger.LogInformation("Kafka Producer started (Server: {Server}, Topic: {Topic})", serverInfo, _options.Topic);
+            _logger.LogInformation("Kafka Producer started (Server: {Server}, Topic: {Topic}, SecurityProtocol: {SecurityProtocol})",
+                _options.BootstrapServers, _options.Topic, _options.SecurityProtocol ?? "Plaintext");
             
             return Task.CompletedTask;
         }
@@ -186,10 +170,7 @@ public sealed class KafkaProducer : IAsyncDisposable
                 }
             };
 
-            // Use Event Hub name as topic if available, otherwise use configured topic
-            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
-                ? GetEventHubNameFromConnectionString() ?? _options.Topic
-                : _options.Topic;
+            var topic = _options.Topic;
             
             var stopwatch = Stopwatch.StartNew();
             var deliveryResult = await _producer.ProduceAsync(topic, message, cancellationToken)
@@ -204,9 +185,7 @@ public sealed class KafkaProducer : IAsyncDisposable
         catch (ProduceException<string, string> ex)
         {
             // Record error metrics
-            var topic = !string.IsNullOrWhiteSpace(_options.EventHubsConnectionString) 
-                ? GetEventHubNameFromConnectionString() ?? _options.Topic
-                : _options.Topic;
+            var topic = _options.Topic;
             KafkaMetrics.RecordProduceError(topic);
             
             _logger.LogError(ex, "Failed to publish telemetry event {EventId} to Kafka. Error: {Error}, ErrorCode: {ErrorCode}",
@@ -220,15 +199,33 @@ public sealed class KafkaProducer : IAsyncDisposable
         }
     }
 
-    private string? GetEventHubNameFromConnectionString()
+    private void ApplySecuritySettings(ProducerConfig config)
     {
-        if (string.IsNullOrWhiteSpace(_options.EventHubsConnectionString))
+        if (string.IsNullOrWhiteSpace(_options.SecurityProtocol))
         {
-            return null;
+            return;
         }
-        
-        var eventHubsConfig = EventHubsHelper.ParseEventHubsConnectionString(_options.EventHubsConnectionString);
-        return eventHubsConfig.TryGetValue("eventhub.name", out var eventHubName) ? eventHubName : null;
+
+        if (Enum.TryParse<SecurityProtocol>(_options.SecurityProtocol, true, out var securityProtocol))
+        {
+            config.SecurityProtocol = securityProtocol;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslMechanism) &&
+            Enum.TryParse<SaslMechanism>(_options.SaslMechanism, true, out var saslMechanism))
+        {
+            config.SaslMechanism = saslMechanism;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslUsername))
+        {
+            config.SaslUsername = _options.SaslUsername;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.SaslPassword))
+        {
+            config.SaslPassword = _options.SaslPassword;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -237,4 +234,3 @@ public sealed class KafkaProducer : IAsyncDisposable
         _producer?.Dispose();
     }
 }
-

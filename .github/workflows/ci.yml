@@ -53,3 +53,70 @@ jobs:
       run: dotnet test Gateway.sln --configuration Release --no-build --verbosity normal
       continue-on-error: true
 
+  observability-e2e:
+    name: Observability E2E (Grafana)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Playwright dependencies
+      working-directory: tests/e2e
+      run: |
+        npm install
+        npm run install:browsers
+
+    - name: Start observability stack
+      run: docker compose up -d --build
+
+    - name: Wait for services
+      run: |
+        wait_for() {
+          local url="$1"
+          local name="$2"
+          for i in {1..60}; do
+            if curl -fsS "$url" > /dev/null; then
+              echo "$name is ready"
+              return 0
+            fi
+            sleep 2
+          done
+          echo "$name did not become ready: $url"
+          return 1
+        }
+
+        wait_for "http://localhost:5000/metrics" "Gateway API"
+        wait_for "http://localhost:9090/-/healthy" "Prometheus"
+        wait_for "http://localhost:3000/api/health" "Grafana"
+
+    - name: Run observability Playwright E2E
+      working-directory: tests/e2e
+      env:
+        API_BASE_URL: http://localhost:5000
+        PROMETHEUS_BASE_URL: http://localhost:9090
+        GRAFANA_BASE_URL: http://localhost:3000
+        GRAFANA_USER: admin
+        GRAFANA_PASSWORD: admin
+      run: npm test
+
+    - name: Upload Playwright report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-observability-report
+        path: |
+          tests/e2e/playwright-report
+          tests/e2e/test-results
+
+    - name: Print container logs on failure
+      if: failure()
+      run: docker compose logs --no-color
+
+    - name: Stop stack
+      if: always()
+      run: docker compose down -v
