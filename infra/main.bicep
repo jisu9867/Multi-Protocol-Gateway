@@ -48,6 +48,7 @@ param mqttMinReplicas int = 1
 
 var namePrefix = '${workloadName}-${environment}-kr'
 var keyVaultName = take(replace('${namePrefix}-kv', '_', '-'), 24)
+var acrName = take(replace('${namePrefix}acr', '-', ''), 50)
 
 module network './modules/network.bicep' = {
   name: 'network'
@@ -116,6 +117,10 @@ resource keyVaultResource 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
+resource acrResource 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: acrName
+}
+
 resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVaultResource
   name: 'kafka-sasl-password'
@@ -146,8 +151,14 @@ module apiApp './modules/container-app.bicep' = {
     cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
+    registryUsername: acrResource.listCredentials().username
+    registryPasswordSecretName: 'acr-password'
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     secrets: [
+      {
+        name: 'acr-password'
+        value: acrResource.listCredentials().passwords[0].value
+      }
       {
         name: 'postgres-connection-string'
         keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/postgres-connection-string'
@@ -239,8 +250,15 @@ module uiApp './modules/container-app.bicep' = {
     cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
+    registryUsername: acrResource.listCredentials().username
+    registryPasswordSecretName: 'acr-password'
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-    secrets: []
+    secrets: [
+      {
+        name: 'acr-password'
+        value: acrResource.listCredentials().passwords[0].value
+      }
+    ]
     env: [
       {
         name: 'ASPNETCORE_ENVIRONMENT'
@@ -272,6 +290,8 @@ module mqttApp './modules/container-app.bicep' = {
     cpu: '0.25'
     memory: '0.5Gi'
     registryServer: ''
+    registryUsername: ''
+    registryPasswordSecretName: ''
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     secrets: []
     env: []

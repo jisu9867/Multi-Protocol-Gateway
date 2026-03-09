@@ -9,6 +9,8 @@ param maxReplicas int
 param cpu string
 param memory string
 param registryServer string
+param registryUsername string = ''
+param registryPasswordSecretName string = ''
 param appInsightsConnectionString string
 param secrets array
 param env array
@@ -44,7 +46,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       registries: empty(registryServer) ? [] : [
         {
           server: registryServer
-          identity: 'system'
+          ...(!empty(registryUsername) && !empty(registryPasswordSecretName) ? {
+            username: registryUsername
+            passwordSecretRef: registryPasswordSecretName
+          } : {
+            identity: 'system'
+          })
         }
       ]
       secrets: secrets

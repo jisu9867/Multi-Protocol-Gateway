@@ -12,7 +12,8 @@ permissions:
   packages: write
 
 env:
-  REGISTRY: ghcr.io
+  DEV_ACR_LOGIN_SERVER: gatewaydevkracr.azurecr.io
+  PROD_ACR_LOGIN_SERVER: gatewayprodkracr.azurecr.io
 
 jobs:
   validate:
@@ -42,8 +43,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/dev.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.DEV_POSTGRES_ADMIN_PASSWORD }}' \
-            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
-            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
+            --parameters apiImage='${{ env.DEV_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.DEV_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
 
   build_and_push:
     if: github.event_name == 'push'
@@ -57,12 +58,25 @@ jobs:
           echo "IMAGE_NAME_API=${GITHUB_REPOSITORY,,}/gateway-api" >> "$GITHUB_ENV"
           echo "IMAGE_NAME_UI=${GITHUB_REPOSITORY,,}/gateway-ui" >> "$GITHUB_ENV"
 
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Select Target ACR
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "ACR_NAME=gatewayprodkracr" >> "$GITHUB_ENV"
+            echo "ACR_LOGIN_SERVER=${{ env.PROD_ACR_LOGIN_SERVER }}" >> "$GITHUB_ENV"
+          else
+            echo "ACR_NAME=gatewaydevkracr" >> "$GITHUB_ENV"
+            echo "ACR_LOGIN_SERVER=${{ env.DEV_ACR_LOGIN_SERVER }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Login to ACR
+        run: az acr login --name "${{ env.ACR_NAME }}"
 
       - name: Build and Push API
         uses: docker/build-push-action@v5
@@ -70,7 +84,7 @@ jobs:
           context: .
           file: src/Gateway.Api/Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}
+          tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}
 
       - name: Build and Push UI
         uses: docker/build-push-action@v5
@@ -78,7 +92,7 @@ jobs:
           context: .
           file: src/Gateway.Ui/Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}
+          tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}
 
   deploy_dev:
     if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
@@ -108,8 +122,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/dev.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.DEV_POSTGRES_ADMIN_PASSWORD }}' \
-            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
-            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}' \
+            --parameters apiImage='${{ env.DEV_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.DEV_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}' \
             --query properties.outputs > outputs.json
 
           echo "api_url=$(jq -r '.apiUrl.value' outputs.json)" >> $GITHUB_OUTPUT
@@ -149,8 +163,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/prod.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
-            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
-            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
+            --parameters apiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
 
       - name: Deploy (prod)
         run: |
@@ -159,5 +173,5 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/prod.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
-            --parameters apiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
-            --parameters uiImage='${{ env.REGISTRY }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
+            --parameters apiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
+            --parameters uiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'

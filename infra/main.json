@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "14779803099558101978"
+      "templateHash": "4477581912512369390"
     }
   },
   "parameters": {
@@ -107,7 +107,8 @@
   },
   "variables": {
     "namePrefix": "[format('{0}-{1}-kr', parameters('workloadName'), parameters('environment'))]",
-    "keyVaultName": "[take(replace(format('{0}-kv', variables('namePrefix')), '_', '-'), 24)]"
+    "keyVaultName": "[take(replace(format('{0}-kv', variables('namePrefix')), '_', '-'), 24)]",
+    "acrName": "[take(replace(format('{0}acr', variables('namePrefix')), '-', ''), 50)]"
   },
   "resources": [
     {
@@ -799,11 +800,21 @@
           "registryServer": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
           },
+          "registryUsername": {
+            "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').username]"
+          },
+          "registryPasswordSecretName": {
+            "value": "acr-password"
+          },
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
           "secrets": {
             "value": [
+              {
+                "name": "acr-password",
+                "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').passwords[0].value]"
+              },
               {
                 "name": "postgres-connection-string",
                 "keyVaultUrl": "[format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value)]",
@@ -884,7 +895,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "18259890504093499451"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -920,6 +931,14 @@
             },
             "registryServer": {
               "type": "string"
+            },
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
+              "type": "string",
+              "defaultValue": ""
             },
             "appInsightsConnectionString": {
               "type": "string"
@@ -969,7 +988,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(createObject('server', parameters('registryServer'), 'identity', 'system')))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1072,11 +1091,22 @@
           "registryServer": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
           },
+          "registryUsername": {
+            "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').username]"
+          },
+          "registryPasswordSecretName": {
+            "value": "acr-password"
+          },
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
           "secrets": {
-            "value": []
+            "value": [
+              {
+                "name": "acr-password",
+                "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', variables('acrName')), '2023-07-01').passwords[0].value]"
+              }
+            ]
           },
           "env": {
             "value": [
@@ -1102,7 +1132,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "18259890504093499451"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -1138,6 +1168,14 @@
             },
             "registryServer": {
               "type": "string"
+            },
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
+              "type": "string",
+              "defaultValue": ""
             },
             "appInsightsConnectionString": {
               "type": "string"
@@ -1187,7 +1225,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(createObject('server', parameters('registryServer'), 'identity', 'system')))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1285,6 +1323,12 @@
           "registryServer": {
             "value": ""
           },
+          "registryUsername": {
+            "value": ""
+          },
+          "registryPasswordSecretName": {
+            "value": ""
+          },
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
@@ -1302,7 +1346,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "18259890504093499451"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -1338,6 +1382,14 @@
             },
             "registryServer": {
               "type": "string"
+            },
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
+              "type": "string",
+              "defaultValue": ""
             },
             "appInsightsConnectionString": {
               "type": "string"
@@ -1387,7 +1439,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(createObject('server', parameters('registryServer'), 'identity', 'system')))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1517,7 +1569,9 @@
             "value": "[parameters('monthlyBudgetUsd')]"
           },
           "contactEmails": {
-            "value": []
+            "value": [
+              "jisu986702@naver.com"
+            ]
           }
         },
         "template": {
@@ -1527,7 +1581,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "3998899086403477396"
+              "templateHash": "17389785253841352996"
             }
           },
           "parameters": {
@@ -1551,7 +1605,7 @@
                 "amount": "[parameters('amount')]",
                 "timeGrain": "Monthly",
                 "timePeriod": {
-                  "startDate": "2026-01-01T00:00:00Z",
+                  "startDate": "2026-03-01T00:00:00Z",
                   "endDate": "2030-12-31T00:00:00Z"
                 },
                 "notifications": {
