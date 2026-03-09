@@ -13,14 +13,17 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME_API: ${{ github.repository }}/gateway-api
-  IMAGE_NAME_UI: ${{ github.repository }}/gateway-ui
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Normalize Image Names
+        run: |
+          echo "IMAGE_NAME_API=${GITHUB_REPOSITORY,,}/gateway-api" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_UI=${GITHUB_REPOSITORY,,}/gateway-ui" >> "$GITHUB_ENV"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -48,6 +51,11 @@ jobs:
     needs: validate
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Normalize Image Names
+        run: |
+          echo "IMAGE_NAME_API=${GITHUB_REPOSITORY,,}/gateway-api" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_UI=${GITHUB_REPOSITORY,,}/gateway-ui" >> "$GITHUB_ENV"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -79,6 +87,11 @@ jobs:
     environment: Development
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Normalize Image Names
+        run: |
+          echo "IMAGE_NAME_API=${GITHUB_REPOSITORY,,}/gateway-api" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_UI=${GITHUB_REPOSITORY,,}/gateway-ui" >> "$GITHUB_ENV"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
@@ -116,6 +129,11 @@ jobs:
     environment: Production
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Normalize Image Names
+        run: |
+          echo "IMAGE_NAME_API=${GITHUB_REPOSITORY,,}/gateway-api" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_UI=${GITHUB_REPOSITORY,,}/gateway-ui" >> "$GITHUB_ENV"
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
