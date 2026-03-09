@@ -117,8 +117,9 @@ resource keyVaultResource 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
-resource acrResource 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
+resource acrPullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${namePrefix}-acr-pull-mi'
+  location: location
 }
 
 resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
@@ -151,14 +152,9 @@ module apiApp './modules/container-app.bicep' = {
     cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
-    registryUsername: acrResource.listCredentials().username
-    registryPasswordSecretName: 'acr-password'
+    userAssignedIdentityResourceId: acrPullIdentity.id
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     secrets: [
-      {
-        name: 'acr-password'
-        value: acrResource.listCredentials().passwords[0].value
-      }
       {
         name: 'postgres-connection-string'
         keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/postgres-connection-string'
@@ -232,6 +228,7 @@ module apiApp './modules/container-app.bicep' = {
   dependsOn: [
     eventHubSecret
     postgresSecret
+    acrPullRbac
   ]
 }
 
@@ -250,15 +247,9 @@ module uiApp './modules/container-app.bicep' = {
     cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
-    registryUsername: acrResource.listCredentials().username
-    registryPasswordSecretName: 'acr-password'
+    userAssignedIdentityResourceId: acrPullIdentity.id
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-    secrets: [
-      {
-        name: 'acr-password'
-        value: acrResource.listCredentials().passwords[0].value
-      }
-    ]
+    secrets: []
     env: [
       {
         name: 'ASPNETCORE_ENVIRONMENT'
@@ -274,6 +265,9 @@ module uiApp './modules/container-app.bicep' = {
       }
     ]
   }
+  dependsOn: [
+    acrPullRbac
+  ]
 }
 
 module mqttApp './modules/container-app.bicep' = {
@@ -290,11 +284,19 @@ module mqttApp './modules/container-app.bicep' = {
     cpu: '0.25'
     memory: '0.5Gi'
     registryServer: ''
-    registryUsername: ''
-    registryPasswordSecretName: ''
+    userAssignedIdentityResourceId: ''
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     secrets: []
     env: []
+  }
+}
+
+module acrPullRbac './modules/acr-rbac.bicep' = {
+  name: 'acr-pull-rbac'
+  params: {
+    principalId: acrPullIdentity.properties.principalId
+    roleDefinitionId: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+    acrName: acrName
   }
 }
 
