@@ -8,7 +8,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: false
+    adminUserEnabled: true
     anonymousPullEnabled: false
     publicNetworkAccess: 'Enabled'
   }
@@ -16,3 +16,5 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
 
 output id string = acr.id
 output loginServer string = acr.properties.loginServer
+output adminUsername string = acr.listCredentials().username
+output adminPassword string = acr.listCredentials().passwords[0].value

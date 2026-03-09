@@ -9,7 +9,8 @@ param maxReplicas int
 param cpu string
 param memory string
 param registryServer string
-param userAssignedIdentityResourceId string = ''
+param registryUsername string = ''
+param registryPasswordSecretName string = ''
 param appInsightsConnectionString string
 param secrets array
 param env array
@@ -19,10 +20,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
   identity: {
-    type: empty(userAssignedIdentityResourceId) ? 'SystemAssigned' : 'SystemAssigned,UserAssigned'
-    userAssignedIdentities: empty(userAssignedIdentityResourceId) ? null : {
-      '${userAssignedIdentityResourceId}': {}
-    }
+    type: 'SystemAssigned'
   }
   properties: {
     managedEnvironmentId: containerAppsEnvironmentId
@@ -48,10 +46,11 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       registries: empty(registryServer) ? [] : [
         {
           server: registryServer
-          ...(empty(userAssignedIdentityResourceId) ? {
-            identity: 'system'
+          ...(!empty(registryUsername) && !empty(registryPasswordSecretName) ? {
+            username: registryUsername
+            passwordSecretRef: registryPasswordSecretName
           } : {
-            identity: userAssignedIdentityResourceId
+            identity: 'system'
           })
         }
       ]

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "2585813583826562584"
+      "templateHash": "16023213797165074566"
     }
   },
   "parameters": {
@@ -107,16 +107,9 @@
   },
   "variables": {
     "namePrefix": "[format('{0}-{1}-kr', parameters('workloadName'), parameters('environment'))]",
-    "keyVaultName": "[take(replace(format('{0}-kv', variables('namePrefix')), '_', '-'), 24)]",
-    "acrName": "[take(replace(format('{0}acr', variables('namePrefix')), '-', ''), 50)]"
+    "keyVaultName": "[take(replace(format('{0}-kv', variables('namePrefix')), '_', '-'), 24)]"
   },
   "resources": [
-    {
-      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
-      "apiVersion": "2023-01-31",
-      "name": "[format('{0}-acr-pull-mi', variables('namePrefix'))]",
-      "location": "[parameters('location')]"
-    },
     {
       "type": "Microsoft.KeyVault/vaults/secrets",
       "apiVersion": "2023-07-01",
@@ -203,7 +196,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "6855040636476715096"
+              "templateHash": "16937336172699032902"
             }
           },
           "parameters": {
@@ -224,7 +217,7 @@
                 "name": "Basic"
               },
               "properties": {
-                "adminUserEnabled": false,
+                "adminUserEnabled": true,
                 "anonymousPullEnabled": false,
                 "publicNetworkAccess": "Enabled"
               }
@@ -238,6 +231,14 @@
             "loginServer": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', take(replace(format('{0}acr', parameters('namePrefix')), '-', ''), 50)), '2023-07-01').loginServer]"
+            },
+            "adminUsername": {
+              "type": "string",
+              "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', take(replace(format('{0}acr', parameters('namePrefix')), '-', ''), 50)), '2023-07-01').username]"
+            },
+            "adminPassword": {
+              "type": "string",
+              "value": "[listCredentials(resourceId('Microsoft.ContainerRegistry/registries', take(replace(format('{0}acr', parameters('namePrefix')), '-', ''), 50)), '2023-07-01').passwords[0].value]"
             }
           }
         }
@@ -806,14 +807,21 @@
           "registryServer": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
           },
-          "userAssignedIdentityResourceId": {
-            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix')))]"
+          "registryUsername": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminUsername.value]"
+          },
+          "registryPasswordSecretName": {
+            "value": "acr-password"
           },
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
           "secrets": {
             "value": [
+              {
+                "name": "acr-password",
+                "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value]"
+              },
               {
                 "name": "postgres-connection-string",
                 "keyVaultUrl": "[format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value)]",
@@ -894,7 +902,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "2114891059947544842"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -931,7 +939,11 @@
             "registryServer": {
               "type": "string"
             },
-            "userAssignedIdentityResourceId": {
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
               "type": "string",
               "defaultValue": ""
             },
@@ -956,8 +968,7 @@
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
               "identity": {
-                "type": "[if(empty(parameters('userAssignedIdentityResourceId')), 'SystemAssigned', 'SystemAssigned,UserAssigned')]",
-                "userAssignedIdentities": "[if(empty(parameters('userAssignedIdentityResourceId')), null(), createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject()))]"
+                "type": "SystemAssigned"
               },
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
@@ -984,7 +995,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(empty(parameters('userAssignedIdentityResourceId')), createObject('identity', 'system'), createObject('identity', parameters('userAssignedIdentityResourceId')))))))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1033,8 +1044,6 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'acr')]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix')))]",
-        "[resourceId('Microsoft.Resources/deployments', 'acr-pull-rbac')]",
         "[resourceId('Microsoft.Resources/deployments', 'containerapps-env')]",
         "[resourceId('Microsoft.Resources/deployments', 'eventhubs')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'kafka-sasl-password')]",
@@ -1089,14 +1098,22 @@
           "registryServer": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
           },
-          "userAssignedIdentityResourceId": {
-            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix')))]"
+          "registryUsername": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminUsername.value]"
+          },
+          "registryPasswordSecretName": {
+            "value": "acr-password"
           },
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
           "secrets": {
-            "value": []
+            "value": [
+              {
+                "name": "acr-password",
+                "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value]"
+              }
+            ]
           },
           "env": {
             "value": [
@@ -1122,7 +1139,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "2114891059947544842"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -1159,7 +1176,11 @@
             "registryServer": {
               "type": "string"
             },
-            "userAssignedIdentityResourceId": {
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
               "type": "string",
               "defaultValue": ""
             },
@@ -1184,8 +1205,7 @@
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
               "identity": {
-                "type": "[if(empty(parameters('userAssignedIdentityResourceId')), 'SystemAssigned', 'SystemAssigned,UserAssigned')]",
-                "userAssignedIdentities": "[if(empty(parameters('userAssignedIdentityResourceId')), null(), createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject()))]"
+                "type": "SystemAssigned"
               },
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
@@ -1212,7 +1232,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(empty(parameters('userAssignedIdentityResourceId')), createObject('identity', 'system'), createObject('identity', parameters('userAssignedIdentityResourceId')))))))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1261,8 +1281,6 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'acr')]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix')))]",
-        "[resourceId('Microsoft.Resources/deployments', 'acr-pull-rbac')]",
         "[resourceId('Microsoft.Resources/deployments', 'api-app')]",
         "[resourceId('Microsoft.Resources/deployments', 'containerapps-env')]",
         "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
@@ -1312,7 +1330,10 @@
           "registryServer": {
             "value": ""
           },
-          "userAssignedIdentityResourceId": {
+          "registryUsername": {
+            "value": ""
+          },
+          "registryPasswordSecretName": {
             "value": ""
           },
           "appInsightsConnectionString": {
@@ -1332,7 +1353,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "2114891059947544842"
+              "templateHash": "1418779988692346416"
             }
           },
           "parameters": {
@@ -1369,7 +1390,11 @@
             "registryServer": {
               "type": "string"
             },
-            "userAssignedIdentityResourceId": {
+            "registryUsername": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "registryPasswordSecretName": {
               "type": "string",
               "defaultValue": ""
             },
@@ -1394,8 +1419,7 @@
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
               "identity": {
-                "type": "[if(empty(parameters('userAssignedIdentityResourceId')), 'SystemAssigned', 'SystemAssigned,UserAssigned')]",
-                "userAssignedIdentities": "[if(empty(parameters('userAssignedIdentityResourceId')), null(), createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject()))]"
+                "type": "SystemAssigned"
               },
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
@@ -1422,7 +1446,7 @@
                       }
                     ]
                   },
-                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(empty(parameters('userAssignedIdentityResourceId')), createObject('identity', 'system'), createObject('identity', parameters('userAssignedIdentityResourceId')))))))]",
+                  "registries": "[if(empty(parameters('registryServer')), createArray(), createArray(shallowMerge(createArray(createObject('server', parameters('registryServer')), if(and(not(empty(parameters('registryUsername'))), not(empty(parameters('registryPasswordSecretName')))), createObject('username', parameters('registryUsername'), 'passwordSecretRef', parameters('registryPasswordSecretName')), createObject('identity', 'system'))))))]",
                   "secrets": "[parameters('secrets')]"
                 },
                 "template": {
@@ -1472,66 +1496,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'containerapps-env')]",
         "[resourceId('Microsoft.Resources/deployments', 'monitoring')]"
-      ]
-    },
-    {
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2025-04-01",
-      "name": "acr-pull-rbac",
-      "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
-        },
-        "mode": "Incremental",
-        "parameters": {
-          "principalId": {
-            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix'))), '2023-01-31').principalId]"
-          },
-          "roleDefinitionId": {
-            "value": "7f951dda-4ed3-4680-a7ca-43fe172d538d"
-          },
-          "acrName": {
-            "value": "[variables('acrName')]"
-          }
-        },
-        "template": {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "metadata": {
-            "_generator": {
-              "name": "bicep",
-              "version": "0.41.2.15936",
-              "templateHash": "4528685487149623531"
-            }
-          },
-          "parameters": {
-            "principalId": {
-              "type": "string"
-            },
-            "roleDefinitionId": {
-              "type": "string"
-            },
-            "acrName": {
-              "type": "string"
-            }
-          },
-          "resources": [
-            {
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
-              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('principalId'), parameters('roleDefinitionId'))]",
-              "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('roleDefinitionId'))]",
-                "principalId": "[parameters('principalId')]",
-                "principalType": "ServicePrincipal"
-              }
-            }
-          ]
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-acr-pull-mi', variables('namePrefix')))]"
       ]
     },
     {
