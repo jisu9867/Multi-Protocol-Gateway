@@ -292,7 +292,7 @@ module budget './modules/budget.bicep' = {
   params: {
     budgetName: '${namePrefix}-monthly-budget'
     amount: monthlyBudgetUsd
-    contactEmails: []
+    contactEmails: ['jisu986702@naver.com']
   }
 }
 
