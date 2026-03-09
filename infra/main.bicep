@@ -47,6 +47,7 @@ param uiMinReplicas int = 0
 param mqttMinReplicas int = 1
 
 var namePrefix = '${workloadName}-${environment}-kr'
+var keyVaultName = take(replace('${namePrefix}-kv', '_', '-'), 24)
 
 module network './modules/network.bicep' = {
   name: 'network'
@@ -111,15 +112,21 @@ module containerAppsEnv './modules/container-apps-env.bicep' = {
   }
 }
 
+resource keyVaultResource 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
 resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  name: '${keyVault.outputs.name}/kafka-sasl-password'
+  parent: keyVaultResource
+  name: 'kafka-sasl-password'
   properties: {
     value: eventHubs.outputs.connectionString
   }
 }
 
 resource postgresSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  name: '${keyVault.outputs.name}/postgres-connection-string'
+  parent: keyVaultResource
+  name: 'postgres-connection-string'
   properties: {
     value: postgres.outputs.connectionString
   }
@@ -136,7 +143,7 @@ module apiApp './modules/container-app.bicep' = {
     ingressExternal: false
     minReplicas: apiMinReplicas
     maxReplicas: 2
-    cpu: 0.5
+    cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
@@ -229,7 +236,7 @@ module uiApp './modules/container-app.bicep' = {
     ingressAllowedCidrs: network.outputs.allowedUiCidrs
     minReplicas: uiMinReplicas
     maxReplicas: 2
-    cpu: 0.5
+    cpu: '0.5'
     memory: '1Gi'
     registryServer: acr.outputs.loginServer
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
@@ -262,7 +269,7 @@ module mqttApp './modules/container-app.bicep' = {
     ingressExternal: true
     minReplicas: mqttMinReplicas
     maxReplicas: 1
-    cpu: 0.25
+    cpu: '0.25'
     memory: '0.5Gi'
     registryServer: ''
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString

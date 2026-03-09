@@ -6,7 +6,7 @@ param targetPort int
 param ingressExternal bool
 param minReplicas int
 param maxReplicas int
-param cpu float
+param cpu string
 param memory string
 param registryServer string
 param appInsightsConnectionString string
@@ -47,49 +47,21 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
       ]
-      secrets: concat(
-        [
-          for s in secrets: if (contains(s, 'value')) {
-            name: s.name
-            value: s.value
-          }
-        ],
-        [
-          for s in secrets: if (contains(s, 'keyVaultUrl')) {
-            name: s.name
-            keyVaultUrl: s.keyVaultUrl
-            identity: s.identity
-          }
-        ]
-      )
+      secrets: secrets
     }
     template: {
       containers: [
         {
           name: 'main'
           image: image
-          env: concat(
-            [
-              {
-                name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-                value: appInsightsConnectionString
-              }
-            ],
-            [
-              for e in env: if (contains(e, 'value')) {
-                name: e.name
-                value: string(e.value)
-              }
-            ],
-            [
-              for e in env: if (contains(e, 'secretRef')) {
-                name: e.name
-                secretRef: e.secretRef
-              }
-            ]
-          )
+          env: concat([
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: appInsightsConnectionString
+            }
+          ], env)
           resources: {
-            cpu: cpu
+            cpu: json(cpu)
             memory: memory
           }
         }
