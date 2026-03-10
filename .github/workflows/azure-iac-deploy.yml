@@ -163,6 +163,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/prod.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters useKeyVaultReferences=false \
+            --parameters deployKeyVaultRbac=false \
             --parameters apiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
             --parameters uiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'
 
@@ -173,5 +175,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/environments/prod.bicepparam \
             --parameters postgresAdminPassword='${{ secrets.PROD_POSTGRES_ADMIN_PASSWORD }}' \
+            --parameters useKeyVaultReferences=false \
+            --parameters deployKeyVaultRbac=false \
             --parameters apiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_API }}:${{ github.sha }}' \
             --parameters uiImage='${{ env.PROD_ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME_UI }}:${{ github.sha }}'

@@ -46,8 +46,45 @@ param uiMinReplicas int = 0
 @description('Container Apps minimum replicas for MQTT.')
 param mqttMinReplicas int = 1
 
+@description('Use Key Vault URL references for API secrets. Set false to inject secrets directly into Container Apps.')
+param useKeyVaultReferences bool = true
+
+@description('Create Key Vault role assignment for API managed identity. Requires Microsoft.Authorization/roleAssignments/write permission.')
+param deployKeyVaultRbac bool = true
+
 var namePrefix = '${workloadName}-${environment}-kr'
 var keyVaultName = take(replace('${namePrefix}-kv', '_', '-'), 24)
+var apiAppSecrets = useKeyVaultReferences
+  ? [
+      {
+        name: 'acr-password'
+        value: acr.outputs.adminPassword
+      }
+      {
+        name: 'postgres-connection-string'
+        keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/postgres-connection-string'
+        identity: 'system'
+      }
+      {
+        name: 'kafka-sasl-password'
+        keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/kafka-sasl-password'
+        identity: 'system'
+      }
+    ]
+  : [
+      {
+        name: 'acr-password'
+        value: acr.outputs.adminPassword
+      }
+      {
+        name: 'postgres-connection-string'
+        value: postgres.outputs.connectionString
+      }
+      {
+        name: 'kafka-sasl-password'
+        value: eventHubs.outputs.connectionString
+      }
+    ]
 
 module network './modules/network.bicep' = {
   name: 'network'
@@ -116,7 +153,7 @@ resource keyVaultResource 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
-resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (useKeyVaultReferences) {
   parent: keyVaultResource
   name: 'kafka-sasl-password'
   properties: {
@@ -124,7 +161,7 @@ resource eventHubSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   }
 }
 
-resource postgresSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource postgresSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (useKeyVaultReferences) {
   parent: keyVaultResource
   name: 'postgres-connection-string'
   properties: {
@@ -149,22 +186,7 @@ module apiApp './modules/container-app.bicep' = {
     registryUsername: acr.outputs.adminUsername
     registryPasswordSecretName: 'acr-password'
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-    secrets: [
-      {
-        name: 'acr-password'
-        value: acr.outputs.adminPassword
-      }
-      {
-        name: 'postgres-connection-string'
-        keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/postgres-connection-string'
-        identity: 'system'
-      }
-      {
-        name: 'kafka-sasl-password'
-        keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/kafka-sasl-password'
-        identity: 'system'
-      }
-    ]
+    secrets: apiAppSecrets
     env: [
       {
         name: 'ASPNETCORE_ENVIRONMENT'
@@ -224,10 +246,10 @@ module apiApp './modules/container-app.bicep' = {
       }
     ]
   }
-  dependsOn: [
+  dependsOn: useKeyVaultReferences ? [
     eventHubSecret
     postgresSecret
-  ]
+  ] : []
 }
 
 module uiApp './modules/container-app.bicep' = {
@@ -293,7 +315,7 @@ module mqttApp './modules/container-app.bicep' = {
   }
 }
 
-module apiKvRbac './modules/rbac.bicep' = {
+module apiKvRbac './modules/rbac.bicep' = if (useKeyVaultReferences && deployKeyVaultRbac) {
   name: 'api-kv-rbac'
   params: {
     principalId: apiApp.outputs.identityPrincipalId

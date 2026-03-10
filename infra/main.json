@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "16023213797165074566"
+      "templateHash": "17368408326768858145"
     }
   },
   "parameters": {
@@ -103,6 +103,20 @@
       "metadata": {
         "description": "Container Apps minimum replicas for MQTT."
       }
+    },
+    "useKeyVaultReferences": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Use Key Vault URL references for API secrets. Set false to inject secrets directly into Container Apps."
+      }
+    },
+    "deployKeyVaultRbac": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Create Key Vault role assignment for API managed identity. Requires Microsoft.Authorization/roleAssignments/write permission."
+      }
     }
   },
   "variables": {
@@ -111,6 +125,7 @@
   },
   "resources": [
     {
+      "condition": "[parameters('useKeyVaultReferences')]",
       "type": "Microsoft.KeyVault/vaults/secrets",
       "apiVersion": "2023-07-01",
       "name": "[format('{0}/{1}', variables('keyVaultName'), 'kafka-sasl-password')]",
@@ -122,6 +137,7 @@
       ]
     },
     {
+      "condition": "[parameters('useKeyVaultReferences')]",
       "type": "Microsoft.KeyVault/vaults/secrets",
       "apiVersion": "2023-07-01",
       "name": "[format('{0}/{1}', variables('keyVaultName'), 'postgres-connection-string')]",
@@ -816,24 +832,7 @@
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
-          "secrets": {
-            "value": [
-              {
-                "name": "acr-password",
-                "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value]"
-              },
-              {
-                "name": "postgres-connection-string",
-                "keyVaultUrl": "[format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value)]",
-                "identity": "system"
-              },
-              {
-                "name": "kafka-sasl-password",
-                "keyVaultUrl": "[format('{0}secrets/kafka-sasl-password', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value)]",
-                "identity": "system"
-              }
-            ]
-          },
+          "secrets": "[if(parameters('useKeyVaultReferences'), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'keyVaultUrl', format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', 'system'), createObject('name', 'kafka-sasl-password', 'keyVaultUrl', format('{0}secrets/kafka-sasl-password', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', 'system'))), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'value', reference(resourceId('Microsoft.Resources/deployments', 'postgres'), '2025-04-01').outputs.connectionString.value), createObject('name', 'kafka-sasl-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'eventhubs'), '2025-04-01').outputs.connectionString.value))))]",
           "env": {
             "value": [
               {
@@ -1049,6 +1048,7 @@
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'kafka-sasl-password')]",
         "[resourceId('Microsoft.Resources/deployments', 'keyvault')]",
         "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
+        "[resourceId('Microsoft.Resources/deployments', 'postgres')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'postgres-connection-string')]"
       ]
     },
@@ -1499,6 +1499,7 @@
       ]
     },
     {
+      "condition": "[and(parameters('useKeyVaultReferences'), parameters('deployKeyVaultRbac'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "api-kv-rbac",
