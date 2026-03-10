@@ -54,6 +54,24 @@ param deployKeyVaultRbac bool = true
 
 var namePrefix = '${workloadName}-${environment}-kr'
 var keyVaultName = take(replace('${namePrefix}-kv', '_', '-'), 24)
+var apiAppDependsOn = !useKeyVaultReferences
+  ? []
+  : (deployKeyVaultRbac
+      ? [
+          eventHubSecret
+          postgresSecret
+          apiKvRbac
+        ]
+      : [
+          eventHubSecret
+          postgresSecret
+        ])
+
+resource apiKeyVaultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (useKeyVaultReferences) {
+  name: take('${namePrefix}-api-kv-mi', 128)
+  location: location
+}
+
 var apiAppSecrets = useKeyVaultReferences
   ? [
       {
@@ -63,12 +81,12 @@ var apiAppSecrets = useKeyVaultReferences
       {
         name: 'postgres-connection-string'
         keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/postgres-connection-string'
-        identity: 'system'
+        identity: apiKeyVaultIdentity.id
       }
       {
         name: 'kafka-sasl-password'
         keyVaultUrl: '${keyVault.outputs.vaultUri}secrets/kafka-sasl-password'
-        identity: 'system'
+        identity: apiKeyVaultIdentity.id
       }
     ]
   : [
@@ -187,6 +205,7 @@ module apiApp './modules/container-app.bicep' = {
     registryPasswordSecretName: 'acr-password'
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     secrets: apiAppSecrets
+    userAssignedIdentityResourceId: useKeyVaultReferences ? apiKeyVaultIdentity.id : ''
     env: [
       {
         name: 'ASPNETCORE_ENVIRONMENT'
@@ -246,10 +265,7 @@ module apiApp './modules/container-app.bicep' = {
       }
     ]
   }
-  dependsOn: useKeyVaultReferences ? [
-    eventHubSecret
-    postgresSecret
-  ] : []
+  dependsOn: apiAppDependsOn
 }
 
 module uiApp './modules/container-app.bicep' = {
@@ -318,7 +334,7 @@ module mqttApp './modules/container-app.bicep' = {
 module apiKvRbac './modules/rbac.bicep' = if (useKeyVaultReferences && deployKeyVaultRbac) {
   name: 'api-kv-rbac'
   params: {
-    principalId: apiApp.outputs.identityPrincipalId
+    principalId: apiKeyVaultIdentity.properties.principalId
     roleDefinitionId: '4633458b-17de-408a-b874-0445c86b69e6'
     keyVaultName: keyVault.outputs.name
   }

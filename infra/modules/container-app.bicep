@@ -15,13 +15,21 @@ param appInsightsConnectionString string
 param secrets array
 param env array
 param ingressAllowedCidrs array = []
+param userAssignedIdentityResourceId string = ''
 
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
+  identity: empty(userAssignedIdentityResourceId)
+    ? {
+        type: 'SystemAssigned'
+      }
+    : {
+        type: 'SystemAssigned,UserAssigned'
+        userAssignedIdentities: {
+          '${userAssignedIdentityResourceId}': {}
+        }
+      }
   properties: {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {

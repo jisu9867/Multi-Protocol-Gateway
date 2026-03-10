@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "17368408326768858145"
+      "templateHash": "15650619181201129295"
     }
   },
   "parameters": {
@@ -124,6 +124,13 @@
     "keyVaultName": "[take(replace(format('{0}-kv', variables('namePrefix')), '_', '-'), 24)]"
   },
   "resources": [
+    {
+      "condition": "[parameters('useKeyVaultReferences')]",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[take(format('{0}-api-kv-mi', variables('namePrefix')), 128)]",
+      "location": "[parameters('location')]"
+    },
     {
       "condition": "[parameters('useKeyVaultReferences')]",
       "type": "Microsoft.KeyVault/vaults/secrets",
@@ -832,7 +839,8 @@
           "appInsightsConnectionString": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
           },
-          "secrets": "[if(parameters('useKeyVaultReferences'), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'keyVaultUrl', format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', 'system'), createObject('name', 'kafka-sasl-password', 'keyVaultUrl', format('{0}secrets/kafka-sasl-password', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', 'system'))), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'value', reference(resourceId('Microsoft.Resources/deployments', 'postgres'), '2025-04-01').outputs.connectionString.value), createObject('name', 'kafka-sasl-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'eventhubs'), '2025-04-01').outputs.connectionString.value))))]",
+          "secrets": "[if(parameters('useKeyVaultReferences'), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'keyVaultUrl', format('{0}secrets/postgres-connection-string', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128))), createObject('name', 'kafka-sasl-password', 'keyVaultUrl', format('{0}secrets/kafka-sasl-password', reference(resourceId('Microsoft.Resources/deployments', 'keyvault'), '2025-04-01').outputs.vaultUri.value), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128))))), createObject('value', createArray(createObject('name', 'acr-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.adminPassword.value), createObject('name', 'postgres-connection-string', 'value', reference(resourceId('Microsoft.Resources/deployments', 'postgres'), '2025-04-01').outputs.connectionString.value), createObject('name', 'kafka-sasl-password', 'value', reference(resourceId('Microsoft.Resources/deployments', 'eventhubs'), '2025-04-01').outputs.connectionString.value))))]",
+          "userAssignedIdentityResourceId": "[if(parameters('useKeyVaultReferences'), createObject('value', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128))), createObject('value', ''))]",
           "env": {
             "value": [
               {
@@ -901,7 +909,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "1418779988692346416"
+              "templateHash": "2728117687052011074"
             }
           },
           "parameters": {
@@ -958,6 +966,10 @@
             "ingressAllowedCidrs": {
               "type": "array",
               "defaultValue": []
+            },
+            "userAssignedIdentityResourceId": {
+              "type": "string",
+              "defaultValue": ""
             }
           },
           "resources": [
@@ -966,9 +978,7 @@
               "apiVersion": "2024-03-01",
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
+              "identity": "[if(empty(parameters('userAssignedIdentityResourceId')), createObject('type', 'SystemAssigned'), createObject('type', 'SystemAssigned,UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())))]",
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                 "configuration": {
@@ -1043,6 +1053,8 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'acr')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128))]",
+        "[resourceId('Microsoft.Resources/deployments', 'api-kv-rbac')]",
         "[resourceId('Microsoft.Resources/deployments', 'containerapps-env')]",
         "[resourceId('Microsoft.Resources/deployments', 'eventhubs')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'kafka-sasl-password')]",
@@ -1139,7 +1151,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "1418779988692346416"
+              "templateHash": "2728117687052011074"
             }
           },
           "parameters": {
@@ -1196,6 +1208,10 @@
             "ingressAllowedCidrs": {
               "type": "array",
               "defaultValue": []
+            },
+            "userAssignedIdentityResourceId": {
+              "type": "string",
+              "defaultValue": ""
             }
           },
           "resources": [
@@ -1204,9 +1220,7 @@
               "apiVersion": "2024-03-01",
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
+              "identity": "[if(empty(parameters('userAssignedIdentityResourceId')), createObject('type', 'SystemAssigned'), createObject('type', 'SystemAssigned,UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())))]",
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                 "configuration": {
@@ -1353,7 +1367,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "1418779988692346416"
+              "templateHash": "2728117687052011074"
             }
           },
           "parameters": {
@@ -1410,6 +1424,10 @@
             "ingressAllowedCidrs": {
               "type": "array",
               "defaultValue": []
+            },
+            "userAssignedIdentityResourceId": {
+              "type": "string",
+              "defaultValue": ""
             }
           },
           "resources": [
@@ -1418,9 +1436,7 @@
               "apiVersion": "2024-03-01",
               "name": "[parameters('name')]",
               "location": "[parameters('location')]",
-              "identity": {
-                "type": "SystemAssigned"
-              },
+              "identity": "[if(empty(parameters('userAssignedIdentityResourceId')), createObject('type', 'SystemAssigned'), createObject('type', 'SystemAssigned,UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())))]",
               "properties": {
                 "managedEnvironmentId": "[parameters('containerAppsEnvironmentId')]",
                 "configuration": {
@@ -1510,7 +1526,7 @@
         "mode": "Incremental",
         "parameters": {
           "principalId": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'api-app'), '2025-04-01').outputs.identityPrincipalId.value]"
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128)), '2023-01-31').principalId]"
           },
           "roleDefinitionId": {
             "value": "4633458b-17de-408a-b874-0445c86b69e6"
@@ -1556,7 +1572,7 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'api-app')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', take(format('{0}-api-kv-mi', variables('namePrefix')), 128))]",
         "[resourceId('Microsoft.Resources/deployments', 'keyvault')]"
       ]
     },
