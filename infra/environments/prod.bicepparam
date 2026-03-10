@@ -14,5 +14,5 @@ param logRetentionDays = 90
 param apiMinReplicas = 1
 param uiMinReplicas = 1
 param mqttMinReplicas = 1
-param useKeyVaultReferences = false
-param deployKeyVaultRbac = false
+param useKeyVaultReferences = true
+param deployKeyVaultRbac = true
