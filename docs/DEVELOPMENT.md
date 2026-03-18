@@ -1,97 +1,95 @@
-# 로컬 vs Docker 개발 가이드
+﻿# 濡쒖뺄 vs Docker 媛쒕컻 媛?대뱶
 
-로컬(dotnet run)과 Docker Compose 환경에서의 설정 차이 및 Simulator MQTT publish 대상, PostgreSQL 연결 확인 방법을 정리합니다.
+濡쒖뺄(dotnet run)怨?Docker Compose ?섍꼍?먯꽌???ㅼ젙 李⑥씠 諛?Simulator MQTT publish ??? PostgreSQL ?곌껐 ?뺤씤 諛⑸쾿???뺣━?⑸땲??
 
 ---
 
-## 1. 환경별 요약
+## 1. ?섍꼍蹂??붿빟
 
-| 구분 | 로컬 개발 (dotnet run) | Docker Compose |
+| 援щ텇 | 濡쒖뺄 媛쒕컻 (dotnet run) | Docker Compose |
 |------|------------------------|----------------|
-| **API** | `http://localhost:5011` (또는 launchSettings) | `http://localhost:5000` |
+| **API** | `http://localhost:5011` (?먮뒗 launchSettings) | `http://localhost:5000` |
 | **UI** | `http://localhost:5270` | `http://localhost:5001` |
-| **PostgreSQL** | `localhost:5433` (호스트에서 접속 시) | 컨테이너 내부: `postgres:5432` / 호스트: `localhost:5433` |
-| **Kafka** | `localhost:9092` | 컨테이너 내부: `kafka:9093` / 호스트: `localhost:9092` |
-| **MQTT 브로커** | 호스트의 `localhost:1883` | Compose 내 Mosquitto: 컨테이너 `mosquitto:1883` / **호스트에서 publish 시 `localhost:1884`** |
+| **PostgreSQL** | `localhost:5433` (?몄뒪?몄뿉???묒냽 ?? | 而⑦뀒?대꼫 ?대?: `postgres:5432` / ?몄뒪?? `localhost:5433` |
+| **Kafka** | `localhost:9092` | 而⑦뀒?대꼫 ?대?: `kafka:9093` / ?몄뒪?? `localhost:9092` |
+| **MQTT 釉뚮줈而?* | ?몄뒪?몄쓽 `localhost:1883` | Compose ??Mosquitto: 而⑦뀒?대꼫 `mosquitto:1883` / **?몄뒪?몄뿉??publish ??`localhost:1884`** |
 
 ---
 
-## 2. Simulator MQTT Publish 대상
+## 2. Simulator MQTT Publish ???
+Gateway API??MQTT ?좏뵿 `factory/+/+/telemetry` (??쇰뱶移대뱶)瑜?援щ룆?⑸땲??  
+Simulator???꾨옒 二쇱냼濡?publish?섎㈃ ?⑸땲??
 
-Gateway API는 MQTT 토픽 `factory/+/+/telemetry` (와일드카드)를 구독합니다.  
-Simulator는 아래 주소로 publish하면 됩니다.
+### 濡쒖뺄 媛쒕컻 (Gateway瑜?dotnet run?쇰줈 ?ㅽ뻾????
 
-### 로컬 개발 (Gateway를 dotnet run으로 실행할 때)
+- **Broker 二쇱냼**: `localhost:1883`
+- **?좏뵿 ??*: `factory/line-1/ulsan-line1/telemetry` (?⑦꽩: `factory/{line}/{sourceId}/telemetry`)
+- Simulator ?ㅼ젙 ??(YAML): `broker: "localhost:1883"`, `topic_template: "factory/{line}/{source_id}/telemetry"`
 
-- **Broker 주소**: `localhost:1883`
-- **토픽 예**: `factory/line-1/ulsan-line1/telemetry` (패턴: `factory/{line}/{sourceId}/telemetry`)
-- Simulator 설정 예 (YAML): `broker: "localhost:1883"`, `topic_template: "factory/{line}/{source_id}/telemetry"`
+??濡쒖뺄?먯꽌 Mosquitto(?먮뒗 ?ㅻⅨ MQTT 釉뚮줈而?瑜?1883?쇰줈 ?꾩썙 ?먭퀬, Simulator? Gateway API 紐⑤몢 `localhost:1883`???ъ슜?⑸땲??
 
-→ 로컬에서 Mosquitto(또는 다른 MQTT 브로커)를 1883으로 띄워 두고, Simulator와 Gateway API 모두 `localhost:1883`을 사용합니다.
+### Docker Compose (Gateway瑜?docker compose濡??ㅽ뻾????
 
-### Docker Compose (Gateway를 docker compose로 실행할 때)
+- **Broker 二쇱냼**: **`localhost:1884`** (?몄뒪???ы듃 1884媛 Compose??Mosquitto 1883??留ㅽ븨??
+- **?좏뵿 ??*: ?숈씪?섍쾶 `factory/line-1/ulsan-line1/telemetry`
+- Simulator瑜?**?몄뒪?몄뿉??* ?ㅽ뻾???? `broker: "localhost:1884"` 濡??ㅼ젙
 
-- **Broker 주소**: **`localhost:1884`** (호스트 포트 1884가 Compose의 Mosquitto 1883에 매핑됨)
-- **토픽 예**: 동일하게 `factory/line-1/ulsan-line1/telemetry`
-- Simulator를 **호스트에서** 실행할 때: `broker: "localhost:1884"` 로 설정
+> ?ы듃 1884瑜??곕뒗 ?댁쑀: ?몄뒪?몄뿉???대? 1883???곕뒗 MQTT 釉뚮줈而??먮뒗 ?ㅻⅨ Simulator)媛 ?덉쓣 ???덉뼱, Docker??Mosquitto???몄뒪?몄뿉?쒕뒗 1884濡쒕쭔 ?몄텧?⑸땲?? 1883??鍮꾩뼱 ?덉쑝硫?`docker-compose.yml`?먯꽌 `1883:1883`?쇰줈 諛붽퓭???⑸땲??
 
-> 포트 1884를 쓰는 이유: 호스트에서 이미 1883을 쓰는 MQTT 브로커(또는 다른 Simulator)가 있을 수 있어, Docker용 Mosquitto는 호스트에서는 1884로만 노출합니다. 1883이 비어 있으면 `docker-compose.yml`에서 `1883:1883`으로 바꿔도 됩니다.
-
-### Simulator가 Docker 컨테이너로 실행될 때
-
-- 같은 Docker 네트워크 사용 시: `broker: "mosquitto:1883"` (서비스 이름으로 접속)
-- 다른 컴퓨터/컨테이너에서 접속 시: 해당 호스트 IP와 **호스트에서 매핑한 포트**(예: 1884) 사용
+### Simulator媛 Docker 而⑦뀒?대꼫濡??ㅽ뻾????
+- 媛숈? Docker ?ㅽ듃?뚰겕 ?ъ슜 ?? `broker: "mosquitto:1883"` (?쒕퉬???대쫫?쇰줈 ?묒냽)
+- ?ㅻⅨ 而댄벂??而⑦뀒?대꼫?먯꽌 ?묒냽 ?? ?대떦 ?몄뒪??IP? **?몄뒪?몄뿉??留ㅽ븨???ы듃**(?? 1884) ?ъ슜
 
 ---
 
-## 3. PostgreSQL 연결 확인 (Docker 환경)
+## 3. PostgreSQL ?곌껐 ?뺤씤 (Docker ?섍꼍)
 
-### 3.1 Compose 설정
+### 3.1 Compose ?ㅼ젙
 
-- API 컨테이너: `ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=gateway;Username=gateway;Password=gateway`
-- API는 `depends_on: postgres (service_healthy)` 로 DB 준비 후 기동합니다.
-- Postgres 서비스는 `5433:5432` 로 노출되므로, **호스트에서** 접속할 때는 `localhost:5433` 을 사용합니다.
+- API 而⑦뀒?대꼫: `ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=gateway;Username=gateway;Password=gateway`
+- API??`depends_on: postgres (service_healthy)` 濡?DB 以鍮???湲곕룞?⑸땲??
+- Postgres ?쒕퉬?ㅻ뒗 `5433:5432` 濡??몄텧?섎?濡? **?몄뒪?몄뿉??* ?묒냽???뚮뒗 `localhost:5433` ???ъ슜?⑸땲??
 
-### 3.2 DB 연결 확인 방법
+### 3.2 DB ?곌껐 ?뺤씤 諛⑸쾿
 
-**방법 A: 호스트에서 psql**
+**諛⑸쾿 A: ?몄뒪?몄뿉??psql**
 
 ```bash
-# Docker Postgres에 호스트 포트 5433으로 접속
+# Docker Postgres???몄뒪???ы듃 5433?쇰줈 ?묒냽
 psql -h localhost -p 5433 -U gateway -d gateway
-# 비밀번호: gateway
+# 鍮꾨?踰덊샇: gateway
 ```
 
-**방법 B: 실행 중인 API 컨테이너에서**
+**諛⑸쾿 B: ?ㅽ뻾 以묒씤 API 而⑦뀒?대꼫?먯꽌**
 
 ```bash
 docker exec -it gateway-api dotnet run --no-build --project /app/Gateway.Api.dll -- --urls=http://+:8080
-# 또는 이미 떠 있는 API 로그에서 "Gateway API started" / DB 마이그레이션 성공 로그 확인
+# ?먮뒗 ?대? ???덈뒗 API 濡쒓렇?먯꽌 "Gateway API started" / DB 留덉씠洹몃젅?댁뀡 ?깃났 濡쒓렇 ?뺤씤
 ```
 
-**방법 C: Health Check**
+**諛⑸쾿 C: Health Check**
 
-- API는 Npgsql health check를 등록하므로, 다음으로 DB 상태를 볼 수 있습니다.  
-  `http://localhost:5000/health` (또는 프로젝트에서 사용하는 health 경로) 응답에서 PostgreSQL 항목이 Healthy인지 확인합니다.
+- API??Npgsql health check瑜??깅줉?섎?濡? ?ㅼ쓬?쇰줈 DB ?곹깭瑜?蹂????덉뒿?덈떎.  
+  `http://localhost:5000/health` (?먮뒗 ?꾨줈?앺듃?먯꽌 ?ъ슜?섎뒗 health 寃쎈줈) ?묐떟?먯꽌 PostgreSQL ??ぉ??Healthy?몄? ?뺤씤?⑸땲??
 
-로컬 개발 시에는 `appsettings.Development.json` 등에서 `Host=localhost;Port=5433` 으로 같은 DB(호스트 5433)를 바라보게 하면, 로컬 API와 Docker API 모두 동일 DB를 사용해 검증할 수 있습니다.
+濡쒖뺄 媛쒕컻 ?쒖뿉??`appsettings.Development.json` ?깆뿉??`Host=localhost;Port=5433` ?쇰줈 媛숈? DB(?몄뒪??5433)瑜?諛붾씪蹂닿쾶 ?섎㈃, 濡쒖뺄 API? Docker API 紐⑤몢 ?숈씪 DB瑜??ъ슜??寃利앺븷 ???덉뒿?덈떎.
 
 ---
 
-## 4. 로컬 개발 절차 (dotnet run)
+## 4. 濡쒖뺄 媛쒕컻 ?덉감 (dotnet run)
 
 1. **PostgreSQL**  
-   - Docker로만 띄우기: `docker compose up -d postgres`  
-   - 호스트에서 접속: `localhost:5433`
+   - Docker濡쒕쭔 ?꾩슦湲? `docker compose up -d postgres`  
+   - ?몄뒪?몄뿉???묒냽: `localhost:5433`
 
-2. **Kafka (선택)**  
-   - 로컬에서 Kafka 사용 시: `docker compose up -d zookeeper kafka`  
-   - API 설정: `Kafka__BootstrapServers=localhost:9092`
+2. **Kafka (?좏깮)**  
+   - 濡쒖뺄?먯꽌 Kafka ?ъ슜 ?? `docker compose up -d zookeeper kafka`  
+   - API ?ㅼ젙: `Kafka__BootstrapServers=localhost:9092`
 
-3. **MQTT 브로커**  
-   - 로컬 Mosquitto 등: `localhost:1883` 에서 수신하도록 실행
+3. **MQTT 釉뚮줈而?*  
+   - 濡쒖뺄 Mosquitto ?? `localhost:1883` ?먯꽌 ?섏떊?섎룄濡??ㅽ뻾
 
-4. **API 실행**  
+4. **API ?ㅽ뻾**  
    ```bash
    cd src/Gateway.Api
    dotnet run
@@ -100,61 +98,62 @@ docker exec -it gateway-api dotnet run --no-build --project /app/Gateway.Api.dll
    - MQTT: `localhost:1883`  
    - Kafka: `localhost:9092`
 
-5. **UI 실행**  
+5. **UI ?ㅽ뻾**  
    ```bash
    cd src/Gateway.Ui
    dotnet run
    ```  
-   - API 주소: `http://localhost:5011` (appsettings.Development.json)
+   - API 二쇱냼: `http://localhost:5011` (appsettings.Development.json)
 
 6. **Simulator**  
    - MQTT broker: `localhost:1883`  
-   - 토픽: `factory/+/+/telemetry` 패턴 (예: `factory/line-1/ulsan-line1/telemetry`)
+   - ?좏뵿: `factory/+/+/telemetry` ?⑦꽩 (?? `factory/line-1/ulsan-line1/telemetry`)
 
 ---
 
-## 5. Docker Compose 개발 절차
+## 5. Docker Compose 媛쒕컻 ?덉감
 
-1. **한 번에 기동**  
+1. **??踰덉뿉 湲곕룞**  
    ```bash
    docker compose up --build
    ```
 
-2. **접속 주소**  
+2. **?묒냽 二쇱냼**  
    - API: http://localhost:5000  
    - UI: http://localhost:5001  
-   - PostgreSQL (호스트): `localhost:5433`  
-   - MQTT (호스트에서 publish): **`localhost:1884`**
+   - PostgreSQL (?몄뒪??: `localhost:5433`  
+   - MQTT (?몄뒪?몄뿉??publish): **`localhost:1884`**
 
-3. **Simulator (호스트에서 실행)**  
+3. **Simulator (?몄뒪?몄뿉???ㅽ뻾)**  
    - MQTT broker: **`localhost:1884`**  
-   - 토픽: `factory/line-1/ulsan-line1/telemetry` 등 동일 패턴
+   - ?좏뵿: `factory/line-1/ulsan-line1/telemetry` ???숈씪 ?⑦꽩
 
-4. **PostgreSQL 확인**  
-   - 위 3.2 참고 (호스트: `localhost:5433`, 사용자/DB: gateway/gateway).
+4. **PostgreSQL ?뺤씤**  
+   - ??3.2 李멸퀬 (?몄뒪?? `localhost:5433`, ?ъ슜??DB: gateway/gateway).
 
 ---
 
-## 6. 설정 파일 정리
+## 6. ?ㅼ젙 ?뚯씪 ?뺣━
 
-| 설정 | 로컬 (appsettings.Development.json) | Docker (appsettings.Docker.json + env) |
+| ?ㅼ젙 | 濡쒖뺄 (appsettings.Development.json) | Docker (appsettings.Docker.json + env) |
 |------|-------------------------------------|----------------------------------------|
 | DB | Host=localhost;Port=5433 | Host=postgres;Port=5432 |
 | MQTT Server | localhost | mosquitto |
-| MQTT Port | 1883 | 1883 (컨테이너 내부) |
+| MQTT Port | 1883 | 1883 (而⑦뀒?대꼫 ?대?) |
 | Kafka | localhost:9092 | kafka:9093 |
-| UI → API | http://localhost:5011 | http://api:8080 |
+| UI ??API | http://localhost:5011 | http://api:8080 |
 
 ---
 
-## 7. 트러블슈팅
+## 7. ?몃윭釉붿뒋??
+- **Docker?먯꽌 "port 1883 already allocated"**  
+  ???몄뒪??1883 ?ъ슜 以? Compose??Mosquitto瑜?`1884:1883`?쇰줈 留ㅽ븨???먯뿀?쇰?濡? Simulator??**localhost:1884** 濡?publish ?섎㈃ ?⑸땲??
 
-- **Docker에서 "port 1883 already allocated"**  
-  → 호스트 1883 사용 중. Compose는 Mosquitto를 `1884:1883`으로 매핑해 두었으므로, Simulator는 **localhost:1884** 로 publish 하면 됩니다.
+- **Docker API媛 DB ?곌껐 ?ㅽ뙣**  
+  ??`depends_on` 怨?healthcheck濡?postgres媛 癒쇱? 以鍮꾨맂 ??API媛 ?쒖옉?⑸땲??  
+  ??DB 鍮꾨?踰덊샇/DB紐낆씠 `gateway`/`gateway` ?몄?, `ConnectionStrings__DefaultConnection` ??`Host=postgres;Port=5432;...` ?몄? ?뺤씤?섏꽭??
 
-- **Docker API가 DB 연결 실패**  
-  → `depends_on` 과 healthcheck로 postgres가 먼저 준비된 뒤 API가 시작합니다.  
-  → DB 비밀번호/DB명이 `gateway`/`gateway` 인지, `ConnectionStrings__DefaultConnection` 이 `Host=postgres;Port=5432;...` 인지 확인하세요.
+- **濡쒖뺄?먯꽌???섎뒗??Docker?먯꽌留?MQTT 誘몄닔??*  
+  ??Docker ?섍꼍?먯꽌??諛섎뱶??**Compose ??Mosquitto**瑜??곌퀬, Simulator??**localhost:1884** 濡?publish ?섏꽭??(?몄뒪?몄뿉???ㅽ뻾 ??.
 
-- **로컬에서는 되는데 Docker에서만 MQTT 미수신**  
-  → Docker 환경에서는 반드시 **Compose 내 Mosquitto**를 쓰고, Simulator는 **localhost:1884** 로 publish 하세요 (호스트에서 실행 시).
+

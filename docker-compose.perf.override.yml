@@ -1,0 +1,9 @@
+services:
+  api:
+    environment:
+      - Gateway__EnableSeedData=false
+      - Gateway__EnableObservabilityTestEndpoints=false
+      - Logging__LogLevel__Default=Warning
+      - Logging__LogLevel__Gateway.Api.Services.PipelineService=Warning
+      - Logging__LogLevel__Gateway.Adapters.MqttAdapter=Warning
+      - Logging__LogLevel__Gateway.Infrastructure.Kafka=Warning

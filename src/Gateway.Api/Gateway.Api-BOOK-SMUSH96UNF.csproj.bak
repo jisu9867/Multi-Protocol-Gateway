@@ -32,8 +32,4 @@
     <ProjectReference Include="..\Gateway.Adapters\Gateway.Adapters.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="**\*-BOOK-SMUSH96UNF.cs" />
-  </ItemGroup>
-
 </Project>

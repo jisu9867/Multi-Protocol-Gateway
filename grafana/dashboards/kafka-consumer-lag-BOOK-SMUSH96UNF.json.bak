@@ -83,7 +83,7 @@
           "refId": "A"
         },
         {
-          "expr": "kafka_consumer_high_watermark_offset",
+          "expr": "kafka_consumer_high_watermark",
           "legendFormat": "High Watermark",
           "refId": "B"
         }

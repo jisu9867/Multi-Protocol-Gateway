@@ -15,5 +15,10 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exclude accidental editor backup files from compilation -->
+    <Compile Remove="**/*-BOOK-SMUSH96UNF.cs" />
+  </ItemGroup>
 </Project>
 

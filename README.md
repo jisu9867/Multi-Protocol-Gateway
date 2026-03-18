@@ -46,3 +46,11 @@ All Azure deployment resources are managed by Bicep under [`infra/`](infra/READM
 - `ci.yml`: build and test
 - `docker-build.yml`: container build pipeline
 - `azure-iac-deploy.yml`: `what-if` -> image build/push -> deploy (dev/prod)
+
+## Performance Baseline
+- MQTT large-traffic baseline guide: [`docs/PERFORMANCE/BASELINE_LOAD_TEST.md`](docs/PERFORMANCE/BASELINE_LOAD_TEST.md)
+- Included scripts:
+  - `scripts/perf/run-baseline-matrix.ps1`
+  - `scripts/perf/run-mqtt-load.ps1`
+  - `scripts/perf/set-kafka-partitions.ps1`
+  - `scripts/perf/collect-prometheus-metrics.ps1`
